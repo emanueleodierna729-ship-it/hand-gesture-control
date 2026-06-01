@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+user_gestures.json
+gesture_report_*.json
+gesture_report_*.txt
+.env
