@@ -223,3 +223,78 @@ hand-gesture-control/
 Fatto con ❤️ da **Emanuel Odierna** · Python + MediaPipe + Tkinter
 
 </div>
+import 'dart:async';
+import 'dart:math';
+
+class BiometricService {
+  static final BiometricService _instance = BiometricService._internal();
+
+  factory BiometricService() {
+    return _instance;
+  }
+
+  BiometricService._internal();
+
+  final Random _random = Random();
+  Map<String, BiometricUser> _enrolledUsers = {};
+
+  Future<bool> enrollRetina(String userId, {String eye = 'both'}) async {
+    try {
+      await Future.delayed(Duration(seconds: 2));
+      
+      if (_random.nextDouble() > 0.05) {
+        _enrolledUsers[userId] = BiometricUser(
+          userId: userId,
+          rightEyeHash: 'hash_retina_dx_${_random.nextInt(99999)}',
+          leftEyeHash: 'hash_retina_sx_${_random.nextInt(99999)}',
+          enrolledAt: DateTime.now(),
+        );
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Errore enroll retina: $e');
+      return false;
+    }
+  }
+
+  Future<bool> verifyRetina(String userId, {String eye = 'right'}) async {
+    try {
+      await Future.delayed(Duration(seconds: 1));
+      
+      if (!_enrolledUsers.containsKey(userId)) {
+        return false;
+      }
+      
+      return _random.nextDouble() > 0.02;
+    } catch (e) {
+      print('Errore verifica retina: $e');
+      return false;
+    }
+  }
+
+  BiometricUser? getUser(String userId) {
+    return _enrolledUsers[userId];
+  }
+}
+
+class BiometricUser {
+  final String userId;
+  final String rightEyeHash;
+  final String leftEyeHash;
+  final DateTime enrolledAt;
+
+  BiometricUser({
+    required this.userId,
+    required this.rightEyeHash,
+    required this.leftEyeHash,
+    required this.enrolledAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'userId': userId,
+    'rightEyeHash': rightEyeHash,
+    'leftEyeHash': leftEyeHash,
+    'enrolledAt': enrolledAt.toIso8601String(),
+  };
+}
