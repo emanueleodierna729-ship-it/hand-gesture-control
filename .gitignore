@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.log
+*.db
+*.json
+!gesture_*.json
+.DS_Store
+Thumbs.db
+*.command
+avvia.bat
+HandGestureControl.desktop
