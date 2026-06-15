@@ -5,3 +5,8 @@ user_gestures.json
 gesture_report_*.json
 gesture_report_*.txt
 .env
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
