@@ -897,10 +897,16 @@ class CameraThread(threading.Thread):
     def stop_capture(self):
         self._running = False
 
-    def run(self):
+    def _open_camera(self):
         cap = cv2.VideoCapture(Cfg.CAMERA_IDX)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH,  Cfg.CAM_W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, Cfg.CAM_H)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
+
+    def run(self):
+        cap = self._open_camera()
+        self._fail_count = 0
 
         tracker   = HandTracker()
         db        = getattr(self.app, "_db", None)
@@ -910,50 +916,65 @@ class CameraThread(threading.Thread):
         fc = 0
 
         while self._running:
-            ok, frame = cap.read()
-            if not ok:
-                time.sleep(0.01)
-                continue
+            try:
+                ok, frame = cap.read()
+                if not ok:
+                    self._fail_count += 1
+                    if self._fail_count > 30:
+                        cap.release()
+                        self.action = "⚠ RICONNESSIONE CAMERA..."
+                        time.sleep(1.0)
+                        cap = self._open_camera()
+                        self._fail_count = 0
+                    else:
+                        time.sleep(0.01)
+                    continue
+                self._fail_count = 0
 
-            frame = cv2.flip(frame, 1)
+                frame = cv2.flip(frame, 1)
 
-            if self.app.hand_active:
-                results = tracker.process(frame)
-                frame   = tracker.annotate(frame, results)
-                hands   = tracker.extract(results)
-                self.n_hands = len(hands)
-                dom_g, mod_g, action = processor.process(hands)
-                self.dom_g  = dom_g
-                self.mod_g  = mod_g
-                self.action = action
-                self._draw_hud(frame, dom_g, mod_g, action, hands)
+                if self.app.hand_active:
+                    results = tracker.process(frame)
+                    frame   = tracker.annotate(frame, results)
+                    hands   = tracker.extract(results)
+                    self.n_hands = len(hands)
+                    dom_g, mod_g, action = processor.process(hands)
+                    self.dom_g  = dom_g
+                    self.mod_g  = mod_g
+                    self.action = action
+                    self._draw_hud(frame, dom_g, mod_g, action, hands)
 
-                # Feed recorder if a recording session is active
-                recorder = getattr(self.app, "_recorder", None)
-                if recorder and recorder.state in (
-                        GestureRecorder.COUNTDOWN, GestureRecorder.RECORDING) and hands:
-                    dom_lm = max(hands, key=lambda h: h[0][HandTracker.WRIST][0])[0]
-                    recorder.feed_frame(dom_lm)
-            else:
-                self.dom_g = self.mod_g = G.NONE
-                self.action = ""
-                self.n_hands = 0
+                    recorder = getattr(self.app, "_recorder", None)
+                    if recorder and recorder.state in (
+                            GestureRecorder.COUNTDOWN, GestureRecorder.RECORDING) and hands:
+                        dom_lm = max(hands, key=lambda h: h[0][HandTracker.WRIST][0])[0]
+                        recorder.feed_frame(dom_lm)
+                else:
+                    self.dom_g = self.mod_g = G.NONE
+                    self.action = ""
+                    self.n_hands = 0
 
-            fc += 1
-            elapsed = time.perf_counter() - t0
-            if elapsed >= 1.0:
-                self.fps = fc / elapsed
-                fc, t0 = 0, time.perf_counter()
+                fc += 1
+                elapsed = time.perf_counter() - t0
+                if elapsed >= 1.0:
+                    self.fps = fc / elapsed
+                    fc, t0 = 0, time.perf_counter()
 
-            cv2.putText(frame, f"FPS {self.fps:.0f}", (8, 26),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 220, 80), 2)
+                cv2.putText(frame, f"FPS {self.fps:.0f}", (8, 26),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 220, 80), 2)
 
-            with self._flock:
-                self.frame = frame
-                self._frame_id += 1
+                with self._flock:
+                    self.frame = frame
+                    self._frame_id += 1
 
-        tracker.close()
-        cap.release()
+            except Exception:
+                time.sleep(0.02)
+
+        try:
+            tracker.close()
+            cap.release()
+        except Exception:
+            pass
 
     def get_frame(self):
         with self._flock:
@@ -1342,8 +1363,12 @@ class Dashboard(tk.Tk):
         self._voice      = VoiceController(self.mouse, self._on_voice_cmd)
 
         self._setup_window()
+        self.withdraw()
+        self._splash = SplashScreen(self)
+        self.update()
         self._build_ui()
         self._start_camera()
+        self.after(600, self._finish_splash)
         self._loop()
 
     def _setup_window(self):
@@ -1769,6 +1794,11 @@ class Dashboard(tk.Tk):
             lbl.configure(text=f"  {texts[i]}" if i < len(texts) else "")
 
     # ── main loop ─────────────────────────────────────────────
+    def _finish_splash(self):
+        if hasattr(self, "_splash") and self._splash.winfo_exists():
+            self._splash.done()
+        self.deiconify()
+
     def _start_camera(self):
         self._cam = CameraThread(self)
         self._cam.start_capture()
@@ -1823,17 +1853,67 @@ class Dashboard(tk.Tk):
         self.after(Cfg.DWELL_MS, self._loop)
 
     def _on_close(self):
-        if self._cam:
-            self._cam.stop_capture()
-        self._voice.stop()
-        self._db.save()
+        try:
+            if self._cam:
+                self._cam.stop_capture()
+            self._voice.stop()
+            self._db.save()
+        except Exception:
+            pass
         self.destroy()
         sys.exit(0)
+
+    def _show_error(self, title: str, msg: str):
+        from tkinter import messagebox
+        messagebox.showerror(title, msg)
+
+
+# ─────────────────────────────────────────────────────────────
+#  SPLASH SCREEN
+# ─────────────────────────────────────────────────────────────
+class SplashScreen(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.overrideredirect(True)
+
+        w, h = 420, 240
+        sx = (parent.winfo_screenwidth()  - w) // 2
+        sy = (parent.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{sx}+{sy}")
+
+        self.configure(bg=Cfg.BG_DARK)
+        tk.Label(self, text="✋", font=("Segoe UI", 48),
+                 bg=Cfg.BG_DARK, fg=Cfg.ACCENT).pack(pady=(24, 0))
+        tk.Label(self, text="Hand Gesture Control",
+                 font=("Segoe UI", 18, "bold"),
+                 bg=Cfg.BG_DARK, fg=Cfg.TEXT).pack()
+        tk.Label(self, text="v2  —  Caricamento...",
+                 font=("Segoe UI", 10),
+                 bg=Cfg.BG_DARK, fg=Cfg.TEXT_DIM).pack()
+        self._bar = tk.Canvas(self, width=w - 80, height=6,
+                              bg=Cfg.BG_MID, highlightthickness=0)
+        self._bar.pack(pady=(20, 0))
+        self._progress = 0
+        self._animate()
+
+    def _animate(self):
+        self._progress = min(self._progress + 12, 340)
+        self._bar.delete("all")
+        self._bar.create_rectangle(0, 0, self._progress, 6, fill=Cfg.ACCENT)
+        if self._progress < 340:
+            self.after(50, self._animate)
+
+    def done(self):
+        self.destroy()
 
 
 # ─────────────────────────────────────────────────────────────
 #  ENTRY POINT
 # ─────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+def main():
     app = Dashboard()
     app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
