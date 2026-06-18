@@ -45,13 +45,13 @@ class Cfg:
     TRACK_CONF   = 0.55
 
     # Mouse
-    SMOOTH       = 0.28           # EMA alpha for cursor position
+    SMOOTH       = 0.35           # EMA alpha for cursor position
     PINCH_THRESH = 0.042
     DRAG_THRESH  = 0.032
     SCROLL_SENS  = 18
     CLICK_CD     = 0.30
     SHORTCUT_CD  = 0.70
-    DWELL_MS     = 30
+    DWELL_MS     = 16
 
     # ── NEW: Landmark EMA smoothing ──
     LMARK_ALPHA  = 0.40           # higher = more responsive, less smooth
@@ -339,9 +339,15 @@ class SmoothMouse:
         tx, ty = self._n2s(nx, ny)
         a = Cfg.SMOOTH
         with self._lk:
-            self.cx = int(self.cx + a * (tx - self.cx))
-            self.cy = int(self.cy + a * (ty - self.cy))
-            pyautogui.moveTo(self.cx, self.cy)
+            nx_ = int(self.cx + a * (tx - self.cx))
+            ny_ = int(self.cy + a * (ty - self.cy))
+            if abs(nx_ - self.cx) < 1 and abs(ny_ - self.cy) < 1:
+                return
+            self.cx, self.cy = nx_, ny_
+            if self._mc:
+                self._mc.position = (self.cx, self.cy)
+            else:
+                pyautogui.moveTo(self.cx, self.cy)
 
     def _click_ok(self) -> bool:
         now = time.time()
@@ -877,6 +883,7 @@ class CameraThread(threading.Thread):
         self._running  = False
         self._flock    = threading.Lock()
         self.frame     = None
+        self._frame_id = 0
         self.dom_g     = G.NONE
         self.mod_g     = G.NONE
         self.action    = ""
@@ -942,14 +949,15 @@ class CameraThread(threading.Thread):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 220, 80), 2)
 
             with self._flock:
-                self.frame = frame.copy()
+                self.frame = frame
+                self._frame_id += 1
 
         tracker.close()
         cap.release()
 
     def get_frame(self):
         with self._flock:
-            return None if self.frame is None else self.frame.copy()
+            return self._frame_id, self.frame
 
     @staticmethod
     def _draw_hud(frame, dom_g, mod_g, action, hands):
@@ -1326,6 +1334,8 @@ class Dashboard(tk.Tk):
         self.hand_active = True           # attivo di default all'avvio
         self._vk         = None
         self._cam        = None
+        self._last_fid   = -1
+        self._cached_dw  = 0
         self._db         = GestureDatabase()
         self._recogniser = CustomGestureRecogniser(self._db)
         self._recorder   = GestureRecorder(self._db, self._recogniser)
@@ -1766,13 +1776,16 @@ class Dashboard(tk.Tk):
     def _loop(self):
         try:
             if self._cam:
-                frame = self._cam.get_frame()
-                if frame is not None:
+                fid, frame = self._cam.get_frame()
+                if frame is not None and fid != self._last_fid:
+                    self._last_fid = fid
                     h, w  = frame.shape[:2]
                     avail = self._left_panel.winfo_width()
                     dw    = max(300, avail - 16) if avail > 10 else 630
-                    dh    = int(h * dw / w)
-                    small = cv2.resize(frame, (dw, dh))
+                    if dw != self._cached_dw:
+                        self._cached_dw = dw
+                    dh = int(h * dw / w)
+                    small = cv2.resize(frame, (dw, dh), interpolation=cv2.INTER_LINEAR)
                     photo = ImageTk.PhotoImage(
                         Image.fromarray(cv2.cvtColor(small, cv2.COLOR_BGR2RGB)))
                     self._cam_lbl.configure(image=photo)
