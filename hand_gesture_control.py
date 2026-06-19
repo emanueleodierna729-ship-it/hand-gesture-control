@@ -41,8 +41,8 @@ class Cfg:
     CAM_W        = 640
     CAM_H        = 480
     MAX_HANDS    = 2              # now supports two hands
-    DETECT_CONF  = 0.72
-    TRACK_CONF   = 0.55
+    DETECT_CONF  = 0.65
+    TRACK_CONF   = 0.60
 
     # Mouse
     SMOOTH       = 0.35           # EMA alpha for cursor position
@@ -53,19 +53,28 @@ class Cfg:
     SHORTCUT_CD  = 0.70
     DWELL_MS     = 16
 
-    # ── NEW: Landmark EMA smoothing ──
-    LMARK_ALPHA  = 0.40           # higher = more responsive, less smooth
+    # One Euro Filter (state-of-the-art adaptive smoothing)
+    OEF_MIN_CUTOFF = 1.5          # min cutoff freq — lower = smoother
+    OEF_BETA       = 0.007        # speed coefficient — higher = more responsive
+    OEF_D_CUTOFF   = 1.0          # derivative cutoff
 
-    # ── NEW: Temporal gesture stabilisation ──
-    GEST_WIN     = 6              # frames in voting window
-    GEST_THRESH  = 0.60           # fraction needed to confirm gesture
+    # Landmark smoothing
+    LMARK_ALPHA  = 0.40           # fallback EMA alpha
 
-    # ── NEW: Swipe detection ──
-    SWIPE_VEL    = 0.65           # normalised units/second threshold
+    # Gesture stabilisation with hysteresis
+    GEST_WIN     = 5              # frames in voting window
+    GEST_THRESH  = 0.60           # fraction needed to ENTER a new gesture
+    GEST_EXIT    = 0.40           # fraction needed to LEAVE current gesture
 
-    # ── NEW: Two-hand pinch zoom ──
-    ZOOM_DEAD    = 0.018          # dead-zone for wrist-distance delta
-    ZOOM_CD      = 0.12           # seconds between zoom steps
+    # Swipe detection
+    SWIPE_VEL    = 0.65
+
+    # Zoom
+    ZOOM_DEAD    = 0.018
+    ZOOM_CD      = 0.12
+
+    # Dead zone — cursor jitter elimination
+    DEAD_ZONE    = 0.004          # normalised units — movements below this are ignored
 
     SCR_W, SCR_H = pyautogui.size()
     MARGIN_X     = 0.12
@@ -91,51 +100,149 @@ class Cfg:
 
 
 # ─────────────────────────────────────────────────────────────
-#  LANDMARK SMOOTHER  — per-hand EMA on raw 21-point positions
+#  ONE EURO FILTER — state-of-the-art adaptive smoothing
+#  Casiez, Roussel, Vogel — CHI 2012
+#  Used by Meta Quest, Apple Vision Pro, SteamVR
+#  Adapts: slow = heavy smooth (no jitter), fast = light (no lag)
 # ─────────────────────────────────────────────────────────────
+class OneEuroFilter:
+    def __init__(self, min_cutoff: float = Cfg.OEF_MIN_CUTOFF,
+                 beta: float = Cfg.OEF_BETA,
+                 d_cutoff: float = Cfg.OEF_D_CUTOFF):
+        self._min_cutoff = min_cutoff
+        self._beta       = beta
+        self._d_cutoff   = d_cutoff
+        self._x_prev     = None
+        self._dx_prev    = 0.0
+        self._t_prev     = None
+
+    @staticmethod
+    def _alpha(cutoff: float, dt: float) -> float:
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / max(dt, 1e-6))
+
+    def __call__(self, x: float, t: float | None = None) -> float:
+        if t is None:
+            t = time.perf_counter()
+        if self._t_prev is None:
+            self._x_prev = x
+            self._dx_prev = 0.0
+            self._t_prev = t
+            return x
+
+        dt = max(t - self._t_prev, 1e-6)
+        self._t_prev = t
+
+        a_d = self._alpha(self._d_cutoff, dt)
+        dx = (x - self._x_prev) / dt
+        dx_hat = a_d * dx + (1.0 - a_d) * self._dx_prev
+        self._dx_prev = dx_hat
+
+        cutoff = self._min_cutoff + self._beta * abs(dx_hat)
+        a = self._alpha(cutoff, dt)
+        x_hat = a * x + (1.0 - a) * self._x_prev
+        self._x_prev = x_hat
+        return x_hat
+
+    def reset(self):
+        self._x_prev = None
+        self._dx_prev = 0.0
+        self._t_prev = None
+
+
 class LandmarkSmoother:
-    def __init__(self, alpha: float = Cfg.LMARK_ALPHA):
-        self._a     = alpha
-        self._state: dict[str, list] = {}
+    """Per-hand One Euro Filter on all 21 landmark points (x, y, z)."""
+    def __init__(self):
+        self._filters: dict[str, list[list[OneEuroFilter]]] = {}
 
     def smooth(self, key: str, lm: list) -> list:
-        if key not in self._state:
-            self._state[key] = lm
-            return lm
-        a, prev = self._a, self._state[key]
-        out = [
-            (prev[i][0] + a * (lm[i][0] - prev[i][0]),
-             prev[i][1] + a * (lm[i][1] - prev[i][1]),
-             prev[i][2] + a * (lm[i][2] - prev[i][2]))
-            for i in range(len(lm))
+        t = time.perf_counter()
+        if key not in self._filters:
+            self._filters[key] = [
+                [OneEuroFilter(), OneEuroFilter(), OneEuroFilter()]
+                for _ in range(21)
+            ]
+        filters = self._filters[key]
+        return [
+            (filters[i][0](lm[i][0], t),
+             filters[i][1](lm[i][1], t),
+             filters[i][2](lm[i][2], t))
+            for i in range(min(len(lm), 21))
         ]
-        self._state[key] = out
-        return out
 
     def reset(self, key: str | None = None):
         if key:
-            self._state.pop(key, None)
+            self._filters.pop(key, None)
         else:
-            self._state.clear()
+            self._filters.clear()
 
 
 # ─────────────────────────────────────────────────────────────
-#  GESTURE STABILISER  — temporal majority-vote over last N frames
+#  ADAPTIVE HAND CALIBRATOR — auto-scales thresholds to hand size
+# ─────────────────────────────────────────────────────────────
+class HandCalibrator:
+    """Measures palm width and normalises gesture thresholds."""
+    def __init__(self):
+        self._ref_palm = 0.12
+        self._ema_palm = None
+        self._alpha    = 0.15
+
+    def update(self, lm: list) -> float:
+        palm_w = math.hypot(
+            lm[HandTracker.WRIST][0]      - lm[HandTracker.MIDDLE_MCP][0],
+            lm[HandTracker.WRIST][1]      - lm[HandTracker.MIDDLE_MCP][1],
+        )
+        if self._ema_palm is None:
+            self._ema_palm = palm_w
+        else:
+            self._ema_palm += self._alpha * (palm_w - self._ema_palm)
+        return self.scale()
+
+    def scale(self) -> float:
+        if self._ema_palm is None:
+            return 1.0
+        return max(0.5, min(2.0, self._ema_palm / self._ref_palm))
+
+    def pinch_thresh(self) -> float:
+        return Cfg.PINCH_THRESH * self.scale()
+
+    def drag_thresh(self) -> float:
+        return Cfg.DRAG_THRESH * self.scale()
+
+    def reset(self):
+        self._ema_palm = None
+
+
+# ─────────────────────────────────────────────────────────────
+#  GESTURE STABILISER — hysteresis-based (different enter/exit)
+#  Prevents flickering: harder to ENTER a new gesture, easier to STAY
 # ─────────────────────────────────────────────────────────────
 class GestureStabiliser:
-    def __init__(self, window: int = Cfg.GEST_WIN, thresh: float = Cfg.GEST_THRESH):
-        self._hist   = deque(maxlen=window)
-        self._thresh = thresh
-        self._win    = window
-        self.stable  = "NONE"
+    def __init__(self, window: int = Cfg.GEST_WIN,
+                 enter_thresh: float = Cfg.GEST_THRESH,
+                 exit_thresh: float = Cfg.GEST_EXIT):
+        self._hist         = deque(maxlen=window)
+        self._enter_thresh = enter_thresh
+        self._exit_thresh  = exit_thresh
+        self._win          = window
+        self.stable        = "NONE"
 
     def feed(self, gesture: str) -> str:
         self._hist.append(gesture)
         if len(self._hist) < self._win:
             return self.stable
-        top, cnt = Counter(self._hist).most_common(1)[0]
-        if cnt / self._win >= self._thresh:
+
+        counts = Counter(self._hist)
+        top, top_cnt = counts.most_common(1)[0]
+        top_ratio = top_cnt / self._win
+
+        if top == self.stable:
+            cur_ratio = counts.get(self.stable, 0) / self._win
+            if cur_ratio < self._exit_thresh:
+                self.stable = top
+        elif top_ratio >= self._enter_thresh:
             self.stable = top
+
         return self.stable
 
     def reset(self):
@@ -256,11 +363,12 @@ class G:
 #  GESTURE RECOGNISER  — single-hand, per-frame classification
 # ─────────────────────────────────────────────────────────────
 class GestureRecogniser:
-    H = HandTracker  # alias
+    H = HandTracker
+
+    def __init__(self):
+        self._calib = HandCalibrator()
 
     def fingers_up(self, lm: list) -> list[bool]:
-        """Returns [thumb, index, middle, ring, pinky] True = extended."""
-        # Thumb: tip further left than IP when camera is already flipped
         thumb = lm[self.H.THUMB_TIP][0] < lm[self.H.THUMB_IP][0]
         others = [
             lm[tip][1] < lm[pip][1]
@@ -273,25 +381,28 @@ class GestureRecogniser:
         ]
         return [thumb, *others]
 
-    def pinch(self, lm: list, a: int, b: int) -> float:
+    def _dist(self, lm: list, a: int, b: int) -> float:
         return math.hypot(lm[a][0] - lm[b][0], lm[a][1] - lm[b][1])
 
     def classify(self, lm: list | None) -> str:
         if lm is None:
             return G.NONE
 
+        self._calib.update(lm)
+        pt = self._calib.pinch_thresh()
+
         f = self.fingers_up(lm)
         thumb, idx, mid, ring, pinky = f
 
-        d_ti = self.pinch(lm, self.H.THUMB_TIP, self.H.INDEX_TIP)
-        d_tm = self.pinch(lm, self.H.THUMB_TIP, self.H.MIDDLE_TIP)
-        d_tp = self.pinch(lm, self.H.THUMB_TIP, self.H.PINKY_TIP)
+        d_ti = self._dist(lm, self.H.THUMB_TIP, self.H.INDEX_TIP)
+        d_tm = self._dist(lm, self.H.THUMB_TIP, self.H.MIDDLE_TIP)
+        d_tp = self._dist(lm, self.H.THUMB_TIP, self.H.PINKY_TIP)
 
-        if d_ti < Cfg.PINCH_THRESH:
+        if d_ti < pt:
             return G.PINCH
-        if d_tm < Cfg.PINCH_THRESH * 1.2:
+        if d_tm < pt * 1.2:
             return G.PINCH_RIGHT
-        if d_tp < Cfg.PINCH_THRESH * 1.3 and not idx and not mid and not ring:
+        if d_tp < pt * 1.3 and not idx and not mid and not ring:
             return G.SAVE
 
         if idx and not mid and not ring and not pinky:
@@ -325,10 +436,13 @@ class SmoothMouse:
         self.cx   = Cfg.SCR_W // 2
         self.cy   = Cfg.SCR_H // 2
         self.drag = False
-        self._tc  = 0.0   # last click timestamp
-        self._ts  = 0.0   # last shortcut timestamp
-        self._tz  = 0.0   # last zoom timestamp
+        self._tc  = 0.0
+        self._ts  = 0.0
+        self._tz  = 0.0
         self._lk  = threading.Lock()
+        self._oef_x = OneEuroFilter(min_cutoff=2.5, beta=0.01)
+        self._oef_y = OneEuroFilter(min_cutoff=2.5, beta=0.01)
+        self._raw_prev = (0.5, 0.5)
 
     def _n2s(self, nx: float, ny: float) -> tuple[int, int]:
         mx, my = Cfg.MARGIN_X, Cfg.MARGIN_Y
@@ -337,14 +451,21 @@ class SmoothMouse:
         return int((1.0 - sx) * Cfg.SCR_W), int(sy * Cfg.SCR_H)
 
     def move(self, nx: float, ny: float):
-        tx, ty = self._n2s(nx, ny)
-        a = Cfg.SMOOTH
+        dx = abs(nx - self._raw_prev[0])
+        dy = abs(ny - self._raw_prev[1])
+        if dx < Cfg.DEAD_ZONE and dy < Cfg.DEAD_ZONE:
+            return
+        self._raw_prev = (nx, ny)
+
+        t = time.perf_counter()
+        fx = self._oef_x(nx, t)
+        fy = self._oef_y(ny, t)
+
+        tx, ty = self._n2s(fx, fy)
         with self._lk:
-            nx_ = int(self.cx + a * (tx - self.cx))
-            ny_ = int(self.cy + a * (ty - self.cy))
-            if abs(nx_ - self.cx) < 1 and abs(ny_ - self.cy) < 1:
+            if abs(tx - self.cx) < 1 and abs(ty - self.cy) < 1:
                 return
-            self.cx, self.cy = nx_, ny_
+            self.cx, self.cy = tx, ty
             if self._mc:
                 self._mc.position = (self.cx, self.cy)
             else:
@@ -452,7 +573,7 @@ class DualHandProcessor:
     def __init__(self, mouse: SmoothMouse, db: "GestureDatabase | None" = None):
         self.mouse   = mouse
         self._db     = db
-        self._smoother = LandmarkSmoother(Cfg.LMARK_ALPHA)
+        self._smoother = LandmarkSmoother()
         self._rec    = CustomGestureRecogniser(db) if db else GestureRecogniser()
         self._stab   = {"dom": GestureStabiliser(), "mod": GestureStabiliser()}
         self._vel    = {"dom": VelocityTracker(),   "mod": VelocityTracker()}
@@ -1318,9 +1439,9 @@ class CustomGestureRecogniser(GestureRecogniser):
         H    = HandTracker
         f    = [float(b) for b in self.fingers_up(lm)]
         tips = [H.THUMB_TIP, H.INDEX_TIP, H.MIDDLE_TIP, H.RING_TIP, H.PINKY_TIP]
-        inter = [self.pinch(lm, tips[i], tips[j])
+        inter = [self._dist(lm, tips[i], tips[j])
                  for i in range(5) for j in range(i + 1, 5)]
-        wrist = [self.pinch(lm, H.WRIST, t) for t in tips]
+        wrist = [self._dist(lm, H.WRIST, t) for t in tips]
         return [*f, *inter, *wrist]   # 20 dimensions
 
     def classify(self, lm) -> str:

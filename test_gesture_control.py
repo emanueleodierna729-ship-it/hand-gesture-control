@@ -284,34 +284,37 @@ class TestLandmarkSmoother(unittest.TestCase):
         return [(val, val, val)] * 21
 
     def test_first_frame_identity(self):
-        s  = LandmarkSmoother(alpha=0.5)
+        s  = LandmarkSmoother()
         lm = self._lm(0.8)
         out = s.smooth("a", lm)
-        self.assertEqual(out, lm)
+        self.assertAlmostEqual(out[0][0], 0.8, places=3)
 
-    def test_convergence(self):
-        s   = LandmarkSmoother(alpha=0.5)
-        lm0 = self._lm(0.0)
-        lm1 = self._lm(1.0)
-        s.smooth("a", lm0)
-        out = s.smooth("a", lm1)
-        self.assertAlmostEqual(out[0][0], 0.5, places=5)
+    def test_smoothing_moves_toward_target(self):
+        s   = LandmarkSmoother()
+        s.smooth("a", self._lm(0.0))
+        time.sleep(0.035)
+        out1 = s.smooth("a", self._lm(1.0))
+        time.sleep(0.035)
+        out2 = s.smooth("a", self._lm(1.0))
+        self.assertGreater(out1[0][0], 0.0)
+        self.assertGreater(out2[0][0], out1[0][0])
 
     def test_reset_clears_state(self):
-        s = LandmarkSmoother(alpha=0.5)
+        s = LandmarkSmoother()
         s.smooth("a", self._lm(0.9))
         s.reset("a")
         out = s.smooth("a", self._lm(0.1))
-        self.assertAlmostEqual(out[0][0], 0.1, places=5)
+        self.assertAlmostEqual(out[0][0], 0.1, places=3)
 
     def test_multiple_keys_independent(self):
-        s = LandmarkSmoother(alpha=0.5)
-        s.smooth("a", self._lm(0.0))
-        s.smooth("b", self._lm(1.0))
+        s = LandmarkSmoother()
+        for _ in range(10):
+            s.smooth("a", self._lm(0.0))
+            s.smooth("b", self._lm(1.0))
         out_a = s.smooth("a", self._lm(0.0))
         out_b = s.smooth("b", self._lm(1.0))
-        self.assertAlmostEqual(out_a[0][0], 0.0, places=3)
-        self.assertAlmostEqual(out_b[0][0], 1.0, places=3)
+        self.assertAlmostEqual(out_a[0][0], 0.0, delta=0.05)
+        self.assertAlmostEqual(out_b[0][0], 1.0, delta=0.05)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -319,33 +322,32 @@ class TestLandmarkSmoother(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────
 class TestGestureStabiliser(unittest.TestCase):
     def test_not_stable_before_window_full(self):
-        gs = GestureStabiliser(window=6, thresh=0.6)
+        gs = GestureStabiliser(window=6, enter_thresh=0.6)
         for _ in range(5):
             gs.feed("CURSOR")
         self.assertEqual(gs.stable, "NONE")
 
     def test_stable_after_majority(self):
-        gs = GestureStabiliser(window=6, thresh=0.6)
+        gs = GestureStabiliser(window=6, enter_thresh=0.6)
         for _ in range(6):
             gs.feed("CURSOR")
         self.assertEqual(gs.stable, "CURSOR")
 
     def test_minority_not_confirmed(self):
-        gs = GestureStabiliser(window=6, thresh=0.6)
+        gs = GestureStabiliser(window=6, enter_thresh=0.6)
         for g in ["CURSOR", "CURSOR", "CURSOR", "SCROLL", "SCROLL", "SCROLL"]:
             gs.feed(g)
-        # 50/50 split → neither >= 60%
         self.assertNotEqual(gs.stable, "SCROLL")
 
     def test_reset_clears(self):
-        gs = GestureStabiliser(window=6, thresh=0.6)
+        gs = GestureStabiliser(window=6, enter_thresh=0.6)
         for _ in range(6):
             gs.feed("PINCH")
         gs.reset()
         self.assertEqual(gs.stable, "NONE")
 
     def test_transition(self):
-        gs = GestureStabiliser(window=4, thresh=0.75)
+        gs = GestureStabiliser(window=4, enter_thresh=0.75)
         for g in ["A", "A", "A", "A"]:
             gs.feed(g)
         self.assertEqual(gs.stable, "A")
