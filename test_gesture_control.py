@@ -69,62 +69,77 @@ from hand_gesture_control import (
 # ─────────────────────────────────────────────────────────────
 #  HELPERS
 # ─────────────────────────────────────────────────────────────
+def _base_hand():
+    """Base hand with realistic joint positions and nonzero palm width."""
+    lm = [(0.5, 0.8, 0.0)] * 21
+    lm[HandTracker.WRIST] = (0.5, 0.9, 0.0)
+    lm[HandTracker.INDEX_MCP]  = (0.35, 0.70, 0.0)
+    lm[HandTracker.MIDDLE_MCP] = (0.45, 0.68, 0.0)
+    lm[HandTracker.RING_MCP]   = (0.55, 0.70, 0.0)
+    lm[HandTracker.PINKY_MCP]  = (0.65, 0.72, 0.0)
+    lm[HandTracker.THUMB_CMC]  = (0.30, 0.80, 0.0)
+    lm[HandTracker.THUMB_MCP]  = (0.25, 0.70, 0.0)
+    lm[HandTracker.THUMB_IP]   = (0.22, 0.60, 0.0)
+    return lm
+
+
 def _flat_hand(y_tip=0.2, y_pip=0.5):
-    """21-point landmark list with all fingers extended."""
-    lm = [(0.5, 0.8, 0.0)] * 21   # wrist-ish base
-    # Set each tip above its PIP (y decreases upward in norm coords)
-    for tip, pip in (
-        (HandTracker.INDEX_TIP,  HandTracker.INDEX_PIP),
-        (HandTracker.MIDDLE_TIP, HandTracker.MIDDLE_PIP),
-        (HandTracker.RING_TIP,   HandTracker.RING_PIP),
-        (HandTracker.PINKY_TIP,  HandTracker.PINKY_PIP),
+    """All fingers extended — MCP→PIP→TIP collinear (angle ~180°)."""
+    lm = _base_hand()
+    for mcp, pip, tip in (
+        (HandTracker.INDEX_MCP,  HandTracker.INDEX_PIP,  HandTracker.INDEX_TIP),
+        (HandTracker.MIDDLE_MCP, HandTracker.MIDDLE_PIP, HandTracker.MIDDLE_TIP),
+        (HandTracker.RING_MCP,   HandTracker.RING_PIP,   HandTracker.RING_TIP),
+        (HandTracker.PINKY_MCP,  HandTracker.PINKY_PIP,  HandTracker.PINKY_TIP),
     ):
-        lm[tip]  = (0.5, y_tip, 0.0)
-        lm[pip]  = (0.5, y_pip, 0.0)
-    lm[HandTracker.THUMB_TIP] = (0.3, 0.5, 0.0)   # thumb extended (x < IP)
-    lm[HandTracker.THUMB_IP]  = (0.4, 0.5, 0.0)
+        x = lm[mcp][0]
+        lm[pip] = (x, y_pip, 0.0)
+        lm[tip] = (x, y_tip, 0.0)
+    lm[HandTracker.THUMB_TIP] = (0.15, 0.50, 0.0)
     return lm
 
 
 def _fist_hand():
-    """All fingers curled (tip below PIP)."""
-    lm = [(0.5, 0.5, 0.0)] * 21
-    for tip, pip in (
-        (HandTracker.INDEX_TIP,  HandTracker.INDEX_PIP),
-        (HandTracker.MIDDLE_TIP, HandTracker.MIDDLE_PIP),
-        (HandTracker.RING_TIP,   HandTracker.RING_PIP),
-        (HandTracker.PINKY_TIP,  HandTracker.PINKY_PIP),
+    """All fingers curled — MCP→PIP→TIP forms acute angle (<120°)."""
+    lm = _base_hand()
+    for mcp, pip, tip in (
+        (HandTracker.INDEX_MCP,  HandTracker.INDEX_PIP,  HandTracker.INDEX_TIP),
+        (HandTracker.MIDDLE_MCP, HandTracker.MIDDLE_PIP, HandTracker.MIDDLE_TIP),
+        (HandTracker.RING_MCP,   HandTracker.RING_PIP,   HandTracker.RING_TIP),
+        (HandTracker.PINKY_MCP,  HandTracker.PINKY_PIP,  HandTracker.PINKY_TIP),
     ):
-        lm[tip]  = (0.5, 0.7, 0.0)   # tip BELOW pip → curled
-        lm[pip]  = (0.5, 0.5, 0.0)
-    lm[HandTracker.THUMB_TIP] = (0.6, 0.5, 0.0)   # thumb NOT extended
-    lm[HandTracker.THUMB_IP]  = (0.4, 0.5, 0.0)
+        x = lm[mcp][0]
+        lm[pip] = (x, 0.75, 0.0)
+        lm[tip] = (x, 0.72, 0.0)  # tip curls back toward MCP
+    lm[HandTracker.THUMB_TIP] = (0.35, 0.60, 0.0)  # thumb NOT extended
     return lm
 
 
 def _index_only():
     """Only index extended."""
     lm = _fist_hand()
-    lm[HandTracker.INDEX_TIP] = (0.5, 0.2, 0.0)
-    lm[HandTracker.INDEX_PIP] = (0.5, 0.5, 0.0)
+    x = lm[HandTracker.INDEX_MCP][0]
+    lm[HandTracker.INDEX_PIP] = (x, 0.50, 0.0)
+    lm[HandTracker.INDEX_TIP] = (x, 0.20, 0.0)
     return lm
 
 
 def _two_fingers():
     """Index + middle extended."""
     lm = _index_only()
-    lm[HandTracker.MIDDLE_TIP] = (0.5, 0.2, 0.0)
-    lm[HandTracker.MIDDLE_PIP] = (0.5, 0.5, 0.0)
+    x = lm[HandTracker.MIDDLE_MCP][0]
+    lm[HandTracker.MIDDLE_PIP] = (x, 0.50, 0.0)
+    lm[HandTracker.MIDDLE_TIP] = (x, 0.20, 0.0)
     return lm
 
 
 def _pinch_hand():
-    """Thumb and index very close (pinch)."""
+    """Thumb and index tips very close (pinch)."""
     lm = _fist_hand()
-    lm[HandTracker.THUMB_TIP]  = (0.50, 0.50, 0.0)
-    lm[HandTracker.THUMB_IP]   = (0.45, 0.50, 0.0)
-    lm[HandTracker.INDEX_TIP]  = (0.51, 0.50, 0.0)  # ~0.01 apart → < PINCH_THRESH
-    lm[HandTracker.INDEX_PIP]  = (0.50, 0.60, 0.0)
+    lm[HandTracker.THUMB_TIP]  = (0.40, 0.50, 0.0)
+    lm[HandTracker.THUMB_IP]   = (0.30, 0.55, 0.0)
+    lm[HandTracker.INDEX_TIP]  = (0.41, 0.50, 0.0)  # ~0.01 apart → pinch ratio < 0.35
+    lm[HandTracker.INDEX_PIP]  = (0.38, 0.60, 0.0)
     return lm
 
 

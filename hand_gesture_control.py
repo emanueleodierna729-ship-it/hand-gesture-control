@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Hand Gesture Control System  v2
-Dual-hand support · Landmark EMA smoothing · Temporal gesture stabilisation
+Hand Gesture Control System  v3
+Dual-hand · One Euro Filter · Angle-based finger detection · Hysteresis stabilisation
 """
 
 from __future__ import annotations
@@ -40,41 +40,44 @@ class Cfg:
     CAMERA_IDX   = 0
     CAM_W        = 640
     CAM_H        = 480
-    MAX_HANDS    = 2              # now supports two hands
-    DETECT_CONF  = 0.65
-    TRACK_CONF   = 0.60
+    MAX_HANDS    = 2
+    MODEL_COMPLEXITY = 1
+    DETECT_CONF  = 0.70
+    TRACK_CONF   = 0.65
 
     # Mouse
-    SMOOTH       = 0.35           # EMA alpha for cursor position
-    PINCH_THRESH = 0.042
-    DRAG_THRESH  = 0.032
-    SCROLL_SENS  = 18
-    CLICK_CD     = 0.30
-    SHORTCUT_CD  = 0.70
+    SMOOTH       = 0.35
+    PINCH_THRESH = 0.045
+    DRAG_THRESH  = 0.035
+    SCROLL_SENS  = 22
+    CLICK_CD     = 0.28
+    SHORTCUT_CD  = 0.65
     DWELL_MS     = 16
 
-    # One Euro Filter (state-of-the-art adaptive smoothing)
-    OEF_MIN_CUTOFF = 1.5          # min cutoff freq — lower = smoother
-    OEF_BETA       = 0.007        # speed coefficient — higher = more responsive
-    OEF_D_CUTOFF   = 1.0          # derivative cutoff
+    # One Euro Filter — landmarks (gentle smoothing, preserves gesture shape)
+    OEF_MIN_CUTOFF = 1.0
+    OEF_BETA       = 0.005
+    OEF_D_CUTOFF   = 1.0
 
-    # Landmark smoothing
-    LMARK_ALPHA  = 0.40           # fallback EMA alpha
+    # One Euro Filter — cursor (aggressive smoothing for stable pointer)
+    OEF_CURSOR_MIN_CUTOFF = 3.0
+    OEF_CURSOR_BETA       = 0.02
+    OEF_CURSOR_D_CUTOFF   = 1.0
 
     # Gesture stabilisation with hysteresis
-    GEST_WIN     = 5              # frames in voting window
-    GEST_THRESH  = 0.60           # fraction needed to ENTER a new gesture
-    GEST_EXIT    = 0.40           # fraction needed to LEAVE current gesture
+    GEST_WIN     = 7
+    GEST_THRESH  = 0.57
+    GEST_EXIT    = 0.35
 
     # Swipe detection
-    SWIPE_VEL    = 0.65
+    SWIPE_VEL    = 0.60
 
     # Zoom
-    ZOOM_DEAD    = 0.018
-    ZOOM_CD      = 0.12
+    ZOOM_DEAD    = 0.016
+    ZOOM_CD      = 0.10
 
     # Dead zone — cursor jitter elimination
-    DEAD_ZONE    = 0.004          # normalised units — movements below this are ignored
+    DEAD_ZONE    = 0.003
 
     SCR_W, SCR_H = pyautogui.size()
     MARGIN_X     = 0.12
@@ -183,25 +186,30 @@ class LandmarkSmoother:
 class HandCalibrator:
     """Measures palm width and normalises gesture thresholds."""
     def __init__(self):
-        self._ref_palm = 0.12
         self._ema_palm = None
-        self._alpha    = 0.15
+        self._ref_palm = None
+        self._alpha    = 0.10
+        self._n_frames = 0
 
     def update(self, lm: list) -> float:
         palm_w = math.hypot(
-            lm[HandTracker.WRIST][0]      - lm[HandTracker.MIDDLE_MCP][0],
-            lm[HandTracker.WRIST][1]      - lm[HandTracker.MIDDLE_MCP][1],
+            lm[HandTracker.INDEX_MCP][0] - lm[HandTracker.PINKY_MCP][0],
+            lm[HandTracker.INDEX_MCP][1] - lm[HandTracker.PINKY_MCP][1],
         )
         if self._ema_palm is None:
             self._ema_palm = palm_w
+            self._ref_palm = palm_w
         else:
             self._ema_palm += self._alpha * (palm_w - self._ema_palm)
+            self._n_frames += 1
+            if self._n_frames == 15:
+                self._ref_palm = self._ema_palm
         return self.scale()
 
     def scale(self) -> float:
-        if self._ema_palm is None:
+        if self._ema_palm is None or self._ref_palm is None or self._ref_palm < 1e-8:
             return 1.0
-        return max(0.5, min(2.0, self._ema_palm / self._ref_palm))
+        return max(0.6, min(1.8, self._ema_palm / self._ref_palm))
 
     def pinch_thresh(self) -> float:
         return Cfg.PINCH_THRESH * self.scale()
@@ -209,8 +217,13 @@ class HandCalibrator:
     def drag_thresh(self) -> float:
         return Cfg.DRAG_THRESH * self.scale()
 
+    def palm_width(self) -> float:
+        return self._ema_palm if self._ema_palm else 0.12
+
     def reset(self):
         self._ema_palm = None
+        self._ref_palm = None
+        self._n_frames = 0
 
 
 # ─────────────────────────────────────────────────────────────
@@ -236,11 +249,13 @@ class GestureStabiliser:
         top, top_cnt = counts.most_common(1)[0]
         top_ratio = top_cnt / self._win
 
-        if top != self.stable:
+        if self.stable == "NONE":
+            if top_ratio >= self._enter_thresh:
+                self.stable = top
+        elif top != self.stable:
             cur_ratio = counts.get(self.stable, 0) / self._win
             if cur_ratio < self._exit_thresh and top_ratio >= self._enter_thresh:
                 self.stable = top
-        # top == self.stable → stay, no action needed
 
         return self.stable
 
@@ -288,6 +303,7 @@ class HandTracker:
         self._hands = mh.Hands(
             static_image_mode=False,
             max_num_hands=Cfg.MAX_HANDS,
+            model_complexity=Cfg.MODEL_COMPLEXITY,
             min_detection_confidence=Cfg.DETECT_CONF,
             min_tracking_confidence=Cfg.TRACK_CONF,
         )
@@ -363,32 +379,52 @@ class G:
 # ─────────────────────────────────────────────────────────────
 class GestureRecogniser:
     H = HandTracker
+    CURL_THRESHOLDS = (150.0, 150.0, 145.0, 135.0)
 
     def __init__(self):
         self._calib = HandCalibrator()
+        self._hand_label = "Right"
+
+    @staticmethod
+    def _angle(a: tuple, b: tuple, c: tuple) -> float:
+        ba = (a[0] - b[0], a[1] - b[1])
+        bc = (c[0] - b[0], c[1] - b[1])
+        dot = ba[0] * bc[0] + ba[1] * bc[1]
+        mag = math.sqrt(ba[0]**2 + ba[1]**2) * math.sqrt(bc[0]**2 + bc[1]**2)
+        if mag < 1e-8:
+            return 180.0
+        cos_a = max(-1.0, min(1.0, dot / mag))
+        return math.degrees(math.acos(cos_a))
 
     def fingers_up(self, lm: list) -> list[bool]:
-        thumb = lm[self.H.THUMB_TIP][0] < lm[self.H.THUMB_IP][0]
+        is_right = (self._hand_label == "Right")
+        if is_right:
+            thumb = lm[self.H.THUMB_TIP][0] < lm[self.H.THUMB_IP][0]
+        else:
+            thumb = lm[self.H.THUMB_TIP][0] > lm[self.H.THUMB_IP][0]
+
+        joints = (
+            (self.H.INDEX_MCP,  self.H.INDEX_PIP,  self.H.INDEX_TIP),
+            (self.H.MIDDLE_MCP, self.H.MIDDLE_PIP, self.H.MIDDLE_TIP),
+            (self.H.RING_MCP,   self.H.RING_PIP,   self.H.RING_TIP),
+            (self.H.PINKY_MCP,  self.H.PINKY_PIP,  self.H.PINKY_TIP),
+        )
         others = [
-            lm[tip][1] < lm[pip][1]
-            for tip, pip in (
-                (self.H.INDEX_TIP,  self.H.INDEX_PIP),
-                (self.H.MIDDLE_TIP, self.H.MIDDLE_PIP),
-                (self.H.RING_TIP,   self.H.RING_PIP),
-                (self.H.PINKY_TIP,  self.H.PINKY_PIP),
-            )
+            self._angle(lm[mcp], lm[pip], lm[tip]) > thresh
+            for (mcp, pip, tip), thresh in zip(joints, self.CURL_THRESHOLDS)
         ]
         return [thumb, *others]
 
     def _dist(self, lm: list, a: int, b: int) -> float:
         return math.hypot(lm[a][0] - lm[b][0], lm[a][1] - lm[b][1])
 
-    def classify(self, lm: list | None) -> str:
+    def classify(self, lm: list | None, hand_label: str = "Right") -> str:
         if lm is None:
             return G.NONE
 
+        self._hand_label = hand_label
         self._calib.update(lm)
-        pt = self._calib.pinch_thresh()
+        pw = max(self._calib.palm_width(), 1e-6)
 
         f = self.fingers_up(lm)
         thumb, idx, mid, ring, pinky = f
@@ -397,11 +433,15 @@ class GestureRecogniser:
         d_tm = self._dist(lm, self.H.THUMB_TIP, self.H.MIDDLE_TIP)
         d_tp = self._dist(lm, self.H.THUMB_TIP, self.H.PINKY_TIP)
 
-        if d_ti < pt:
+        r_ti = d_ti / pw
+        r_tm = d_tm / pw
+        r_tp = d_tp / pw
+
+        if r_ti < 0.35:
             return G.PINCH
-        if d_tm < pt * 1.2:
+        if r_tm < 0.42:
             return G.PINCH_RIGHT
-        if d_tp < pt * 1.3 and not idx and not mid and not ring:
+        if r_tp < 0.50 and not idx and not mid and not ring:
             return G.SAVE
 
         if idx and not mid and not ring and not pinky:
@@ -439,9 +479,16 @@ class SmoothMouse:
         self._ts  = 0.0
         self._tz  = 0.0
         self._lk  = threading.Lock()
-        self._oef_x = OneEuroFilter(min_cutoff=2.5, beta=0.01)
-        self._oef_y = OneEuroFilter(min_cutoff=2.5, beta=0.01)
+        self._oef_x = OneEuroFilter(
+            min_cutoff=Cfg.OEF_CURSOR_MIN_CUTOFF,
+            beta=Cfg.OEF_CURSOR_BETA,
+            d_cutoff=Cfg.OEF_CURSOR_D_CUTOFF)
+        self._oef_y = OneEuroFilter(
+            min_cutoff=Cfg.OEF_CURSOR_MIN_CUTOFF,
+            beta=Cfg.OEF_CURSOR_BETA,
+            d_cutoff=Cfg.OEF_CURSOR_D_CUTOFF)
         self._raw_prev = (0.5, 0.5)
+        self._scroll_oef = OneEuroFilter(min_cutoff=1.5, beta=0.003)
 
     def _n2s(self, nx: float, ny: float) -> tuple[int, int]:
         mx, my = Cfg.MARGIN_X, Cfg.MARGIN_Y
@@ -502,6 +549,8 @@ class SmoothMouse:
          else pyautogui.doubleClick())
 
     def scroll(self, dy: float):
+        t = time.perf_counter()
+        dy = self._scroll_oef(dy, t)
         if PYNPUT_OK:
             self._mc.scroll(0, dy)
         else:
@@ -593,13 +642,17 @@ class DualHandProcessor:
         hands: list of (lm, handedness_str)
         Returns (dom_gesture, mod_gesture, action_label)
         """
-        dom_lm, mod_lm = self._assign_roles(hands)
+        dom_pair, mod_pair = self._assign_roles(hands)
+        dom_lm = dom_pair[0] if dom_pair else None
+        mod_lm = mod_pair[0] if mod_pair else None
+        dom_label = dom_pair[1] if dom_pair else "Right"
+        mod_label = mod_pair[1] if mod_pair else "Left"
 
         dom_lm = self._prep("dom", dom_lm)
         mod_lm = self._prep("mod", mod_lm)
 
-        raw_dom = self._rec.classify(dom_lm)
-        raw_mod = self._rec.classify(mod_lm)
+        raw_dom = self._rec.classify(dom_lm, dom_label)
+        raw_mod = self._rec.classify(mod_lm, mod_label)
 
         dom_g = self._stab["dom"].feed(raw_dom) if dom_lm else G.NONE
         mod_g = self._stab["mod"].feed(raw_mod) if mod_lm else G.NONE
@@ -635,10 +688,20 @@ class DualHandProcessor:
         if not hands:
             return None, None
         if len(hands) == 1:
-            return hands[0][0], None
-        # Higher wrist.x → right side of flipped frame → dominant (right) hand
-        s = sorted(hands, key=lambda h: h[0][HandTracker.WRIST][0], reverse=True)
-        return s[0][0], s[1][0]
+            return hands[0], None
+        dom = mod = None
+        for lm, label in hands:
+            if label == "Right":
+                dom = (lm, label)
+            else:
+                mod = (lm, label)
+        if dom is None and mod is None:
+            s = sorted(hands, key=lambda h: h[0][HandTracker.WRIST][0], reverse=True)
+            dom, mod = s[0], s[1]
+        elif dom is None:
+            dom = mod
+            mod = None
+        return dom, mod
 
     def _prep(self, key: str, lm):
         if lm is None:
@@ -1023,6 +1086,7 @@ class CameraThread(threading.Thread):
         cap.set(cv2.CAP_PROP_FRAME_WIDTH,  Cfg.CAM_W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, Cfg.CAM_H)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_FPS, 30)
         return cap
 
     def run(self):
@@ -1443,12 +1507,12 @@ class CustomGestureRecogniser(GestureRecogniser):
         wrist = [self._dist(lm, H.WRIST, t) for t in tips]
         return [*f, *inter, *wrist]   # 20 dimensions
 
-    def classify(self, lm) -> str:
+    def classify(self, lm, hand_label: str = "Right") -> str:
         if lm is None:
             return G.NONE
         fv   = self.feature_vector(lm)
         name = self._knn(fv)
-        return name if name else super().classify(lm)
+        return name if name else super().classify(lm, hand_label)
 
     def _knn(self, fv: list) -> str | None:
         candidates: list[tuple[float, str]] = []
@@ -1944,7 +2008,7 @@ class Dashboard(tk.Tk):
                     if dw != self._cached_dw:
                         self._cached_dw = dw
                     dh = int(h * dw / w)
-                    small = cv2.resize(frame, (dw, dh), interpolation=cv2.INTER_LINEAR)
+                    small = cv2.resize(frame, (dw, dh), interpolation=cv2.INTER_AREA)
                     photo = ImageTk.PhotoImage(
                         Image.fromarray(cv2.cvtColor(small, cv2.COLOR_BGR2RGB)))
                     self._cam_lbl.configure(image=photo)
