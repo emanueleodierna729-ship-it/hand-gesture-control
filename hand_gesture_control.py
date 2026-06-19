@@ -76,17 +76,18 @@ class Cfg:
     VOICE_TIMEOUT    = 3
     VOICE_PHRASE_MAX = 6
 
-    # Tkinter palette
-    BG_DARK  = "#0d1117"
-    BG_MID   = "#161b22"
-    BG_CARD  = "#21262d"
-    ACCENT   = "#e94560"
-    SUCCESS  = "#3fb950"
-    WARNING  = "#d29922"
-    TEXT     = "#e6edf3"
-    TEXT_DIM = "#8b949e"
-    BLUE     = "#58a6ff"
-    PURPLE   = "#bc8cff"
+    # Tkinter palette — identità propria
+    BG_DARK  = "#0a0e1a"
+    BG_MID   = "#121828"
+    BG_CARD  = "#1a2036"
+    ACCENT   = "#7c5cfc"
+    SUCCESS  = "#00d4aa"
+    WARNING  = "#ffb347"
+    TEXT     = "#e8ecf4"
+    TEXT_DIM = "#5c6488"
+    BLUE     = "#4da6ff"
+    PURPLE   = "#a78bfa"
+    BORDER   = "#252d48"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1372,230 +1373,250 @@ class Dashboard(tk.Tk):
         self._loop()
 
     def _setup_window(self):
-        self.title("Hand Gesture Control  ✋  v2")
+        self.title("HGC — Hand Gesture Control")
         self.configure(bg=Cfg.BG_DARK)
-        self.geometry("1160x800")
-        self.minsize(860, 620)
+        self.geometry("1200x820")
+        self.minsize(900, 640)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self):
-        # Header
+        _FONT = "Segoe UI"
+
+        # ── HEADER — minimal, pulito ──────────────────────────
         hdr = tk.Frame(self, bg=Cfg.BG_DARK)
-        hdr.pack(fill="x", padx=12, pady=(10, 4))
-        tk.Label(hdr, text="✋  Hand Gesture Control  v2",
-                 font=("Segoe UI", 19, "bold"),
-                 bg=Cfg.BG_DARK, fg=Cfg.TEXT).pack(side="left")
-        self._status_lbl = tk.Label(hdr, text="●  ATTIVO",
-                 font=("Segoe UI", 11), bg=Cfg.BG_DARK, fg=Cfg.SUCCESS)
-        self._status_lbl.pack(side="right", padx=16)
-        self._hands_lbl = tk.Label(hdr, text="",
-                 font=("Segoe UI", 10), bg=Cfg.BG_DARK, fg=Cfg.TEXT_DIM)
-        self._hands_lbl.pack(side="right", padx=4)
-        self._voice_hdr_lbl = tk.Label(hdr, text="🎤 OFFLINE",
-                 font=("Segoe UI", 11), bg=Cfg.BG_DARK, fg="#ff4444")
-        self._voice_hdr_lbl.pack(side="right", padx=16)
+        hdr.pack(fill="x", padx=20, pady=(14, 0))
 
-        tk.Frame(self, bg=Cfg.BG_CARD, height=1).pack(fill="x", padx=12)
+        title_row = tk.Frame(hdr, bg=Cfg.BG_DARK)
+        title_row.pack(side="left")
+        tk.Label(title_row, text="HGC",
+                 font=(_FONT, 22, "bold"),
+                 bg=Cfg.BG_DARK, fg=Cfg.ACCENT).pack(side="left")
+        tk.Label(title_row, text="  Hand Gesture Control",
+                 font=(_FONT, 14),
+                 bg=Cfg.BG_DARK, fg=Cfg.TEXT).pack(side="left", pady=(4, 0))
 
+        indicators = tk.Frame(hdr, bg=Cfg.BG_DARK)
+        indicators.pack(side="right")
+
+        self._status_lbl = tk.Label(indicators, text="● ATTIVO",
+                 font=(_FONT, 10, "bold"), bg=Cfg.BG_DARK, fg=Cfg.SUCCESS)
+        self._status_lbl.pack(side="right", padx=(16, 0))
+        self._hands_lbl = tk.Label(indicators, text="",
+                 font=(_FONT, 10), bg=Cfg.BG_DARK, fg=Cfg.TEXT_DIM)
+        self._hands_lbl.pack(side="right", padx=8)
+        self._voice_hdr_lbl = tk.Label(indicators, text="MIC OFF",
+                 font=(_FONT, 9), bg=Cfg.BG_DARK, fg=Cfg.TEXT_DIM)
+        self._voice_hdr_lbl.pack(side="right", padx=8)
+
+        # ── Separator line ────────────────────────────────────
+        tk.Frame(self, bg=Cfg.BORDER, height=1).pack(fill="x", padx=20, pady=(10, 0))
+
+        # ── BODY — camera + pannello ──────────────────────────
         body = tk.Frame(self, bg=Cfg.BG_DARK)
-        body.pack(fill="both", expand=True, padx=12, pady=8)
+        body.pack(fill="both", expand=True, padx=20, pady=12)
 
-        # Camera panel (expands with window)
+        # Camera panel
         self._left_panel = tk.Frame(body, bg=Cfg.BG_MID)
-        self._left_panel.pack(side="left", fill="both", expand=True, padx=(0, 6))
-        tk.Label(self._left_panel, text="CAMERA FEED",
-                 font=("Segoe UI", 8, "bold"),
-                 bg=Cfg.BG_MID, fg=Cfg.TEXT_DIM).pack(pady=(8, 2))
-        self._cam_lbl = tk.Label(self._left_panel, bg="#000000")
-        self._cam_lbl.pack(padx=8, pady=(0, 8), fill="both", expand=True)
+        self._left_panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        self._cam_lbl = tk.Label(self._left_panel, bg=Cfg.BG_MID)
+        self._cam_lbl.pack(padx=6, pady=6, fill="both", expand=True)
 
-        # Control panel (right, fixed 340px, tabbed)
-        right = tk.Frame(body, bg=Cfg.BG_DARK, width=340)
+        # Control panel (right, tabbed)
+        right = tk.Frame(body, bg=Cfg.BG_DARK, width=360)
         right.pack(side="right", fill="y")
         right.pack_propagate(False)
 
         style = ttk.Style(self)
         style.theme_use("default")
-        style.configure("Dark.TNotebook",
-                        background=Cfg.BG_DARK, borderwidth=0, tabmargins=[2, 2, 2, 0])
-        style.configure("Dark.TNotebook.Tab",
-                        background=Cfg.BG_CARD, foreground=Cfg.TEXT_DIM,
-                        font=("Segoe UI", 8, "bold"), padding=[10, 5])
-        style.map("Dark.TNotebook.Tab",
-                  background=[("selected", Cfg.BG_MID)],
-                  foreground=[("selected", Cfg.TEXT)])
+        style.configure("App.TNotebook",
+                        background=Cfg.BG_DARK, borderwidth=0,
+                        tabmargins=[0, 0, 0, 0])
+        style.configure("App.TNotebook.Tab",
+                        background=Cfg.BG_MID, foreground=Cfg.TEXT_DIM,
+                        font=(_FONT, 9, "bold"), padding=[14, 7])
+        style.map("App.TNotebook.Tab",
+                  background=[("selected", Cfg.ACCENT)],
+                  foreground=[("selected", "#ffffff")])
 
-        nb = ttk.Notebook(right, style="Dark.TNotebook")
-        nb.pack(fill="both", expand=True, padx=4, pady=4)
+        nb = ttk.Notebook(right, style="App.TNotebook")
+        nb.pack(fill="both", expand=True)
 
         tab_hands = tk.Frame(nb, bg=Cfg.BG_DARK)
-        nb.add(tab_hands, text=" Mani ")
+        nb.add(tab_hands, text="  Controllo  ")
 
         tab_voice = tk.Frame(nb, bg=Cfg.BG_DARK)
-        nb.add(tab_voice, text=" Voce ")
+        nb.add(tab_voice, text="  Voce  ")
 
-        tab_guide = tk.Frame(nb, bg=Cfg.BG_MID)
-        nb.add(tab_guide, text=" Guida ")
+        tab_guide = tk.Frame(nb, bg=Cfg.BG_DARK)
+        nb.add(tab_guide, text="  Guida  ")
 
         tab_learn = tk.Frame(nb, bg=Cfg.BG_DARK)
-        nb.add(tab_learn, text=" Apprendi ")
+        nb.add(tab_learn, text="  Apprendi  ")
 
         self._build_hands_tab(tab_hands)
         self._build_voice_tab(tab_voice)
         self._build_guide_tab(tab_guide)
         self._build_learn_tab(tab_learn)
 
+        # ── STATUS BAR — in basso ─────────────────────────────
+        sbar = tk.Frame(self, bg=Cfg.BG_MID, height=28)
+        sbar.pack(fill="x", side="bottom")
+        sbar.pack_propagate(False)
+        self._fps_lbl = tk.Label(sbar, text="FPS: —",
+                 font=(_FONT, 8), bg=Cfg.BG_MID, fg=Cfg.TEXT_DIM)
+        self._fps_lbl.pack(side="left", padx=12)
+        tk.Label(sbar, text="HGC v2",
+                 font=(_FONT, 8), bg=Cfg.BG_MID, fg=Cfg.TEXT_DIM
+                 ).pack(side="right", padx=12)
+
     def _card(self, parent, title):
-        f = tk.Frame(parent, bg=Cfg.BG_CARD)
-        f.pack(fill="x", padx=4, pady=4)
-        tk.Label(f, text=title, font=("Segoe UI", 9, "bold"),
-                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM).pack(pady=(10, 4))
+        outer = tk.Frame(parent, bg=Cfg.BORDER)
+        outer.pack(fill="x", padx=8, pady=5)
+        f = tk.Frame(outer, bg=Cfg.BG_CARD)
+        f.pack(fill="x", padx=1, pady=1)
+        tk.Label(f, text=title.upper(), font=("Segoe UI", 8, "bold"),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, anchor="w"
+                 ).pack(fill="x", padx=14, pady=(10, 4))
         return f
 
+    def _btn(self, parent, text, color, command, fg="#ffffff"):
+        return tk.Button(parent, text=text,
+            font=("Segoe UI", 10, "bold"), bg=color, fg=fg,
+            activebackground=color, activeforeground=fg,
+            relief="flat", bd=0, cursor="hand2", padx=20, pady=7,
+            command=command)
+
     def _build_hands_tab(self, parent):
-        c1 = self._card(parent, "CONTROLLO MANI")
-        tk.Label(c1, text="Riconosce entrambe le mani:\ndestra = cursore  |  sinistra = modificatore",
-                 font=("Segoe UI", 8), bg=Cfg.BG_CARD,
-                 fg=Cfg.TEXT_DIM, justify="center").pack()
-        self._hand_btn = tk.Button(
-            c1, text="⏹  DISATTIVA",   # attivo di default
-            font=("Segoe UI", 11, "bold"), bg=Cfg.ACCENT, fg=Cfg.TEXT,
-            relief="flat", bd=0, cursor="hand2", padx=16, pady=8,
-            command=self._toggle_hand)
-        self._hand_btn.pack(pady=10, ipadx=8)
+        c1 = self._card(parent, "Riconoscimento")
+        tk.Label(c1, text="Destra = cursore    Sinistra = modificatore",
+                 font=("Segoe UI", 9), bg=Cfg.BG_CARD,
+                 fg=Cfg.TEXT_DIM).pack(padx=14, anchor="w")
+        self._hand_btn = self._btn(c1, "DISATTIVA", Cfg.ACCENT, self._toggle_hand)
+        self._hand_btn.pack(pady=10, padx=14, fill="x")
 
-        c2 = self._card(parent, "TASTIERA VIRTUALE")
-        tk.Label(c2, text="Tastiera on-screen per scrivere\ncon i gesti",
-                 font=("Segoe UI", 8), bg=Cfg.BG_CARD,
-                 fg=Cfg.TEXT_DIM, justify="center").pack()
-        self._vk_btn = tk.Button(
-            c2, text="⌨  MOSTRA TASTIERA",
-            font=("Segoe UI", 10, "bold"), bg=Cfg.BLUE, fg="#000000",
-            relief="flat", bd=0, cursor="hand2", padx=16, pady=8,
-            command=self._toggle_vk)
-        self._vk_btn.pack(pady=10, ipadx=8)
+        c2 = self._card(parent, "Tastiera Virtuale")
+        self._vk_btn = self._btn(c2, "MOSTRA TASTIERA", Cfg.BG_MID, self._toggle_vk, fg=Cfg.TEXT)
+        self._vk_btn.pack(pady=10, padx=14, fill="x")
 
-        c3 = self._card(parent, "GESTI RILEVATI")
-        row = tk.Frame(c3, bg=Cfg.BG_CARD)
-        row.pack(fill="x", padx=10, pady=(2, 0))
-        tk.Label(row, text="DOM:", font=("Segoe UI", 9),
-                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=5, anchor="w").pack(side="left")
-        self._dom_lbl = tk.Label(row, text="—",
-                 font=("Segoe UI", 13, "bold"), bg=Cfg.BG_CARD, fg=Cfg.ACCENT)
-        self._dom_lbl.pack(side="left")
-        row2 = tk.Frame(c3, bg=Cfg.BG_CARD)
-        row2.pack(fill="x", padx=10, pady=(2, 4))
-        tk.Label(row2, text="MOD:", font=("Segoe UI", 9),
-                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=5, anchor="w").pack(side="left")
-        self._mod_lbl = tk.Label(row2, text="—",
-                 font=("Segoe UI", 13, "bold"), bg=Cfg.BG_CARD, fg=Cfg.PURPLE)
-        self._mod_lbl.pack(side="left")
+        c3 = self._card(parent, "Gesti Rilevati")
+        grid = tk.Frame(c3, bg=Cfg.BG_CARD)
+        grid.pack(fill="x", padx=14, pady=(4, 0))
+        tk.Label(grid, text="MANO DX", font=("Segoe UI", 8),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, anchor="w").grid(row=0, column=0, sticky="w")
+        self._dom_lbl = tk.Label(grid, text="—",
+                 font=("Segoe UI", 16, "bold"), bg=Cfg.BG_CARD, fg=Cfg.ACCENT)
+        self._dom_lbl.grid(row=1, column=0, sticky="w", pady=(0, 4))
+        tk.Label(grid, text="MANO SX", font=("Segoe UI", 8),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, anchor="w").grid(row=0, column=1, sticky="w", padx=(24, 0))
+        self._mod_lbl = tk.Label(grid, text="—",
+                 font=("Segoe UI", 16, "bold"), bg=Cfg.BG_CARD, fg=Cfg.PURPLE)
+        self._mod_lbl.grid(row=1, column=1, sticky="w", padx=(24, 0), pady=(0, 4))
         self._act_lbl = tk.Label(c3, text="",
-                 font=("Segoe UI", 9), bg=Cfg.BG_CARD, fg=Cfg.WARNING)
-        self._act_lbl.pack(pady=(0, 8))
+                 font=("Segoe UI", 9), bg=Cfg.BG_CARD, fg=Cfg.SUCCESS)
+        self._act_lbl.pack(padx=14, anchor="w", pady=(0, 10))
 
-        c4 = self._card(parent, "SENSIBILITÀ CURSORE")
+        c4 = self._card(parent, "Sensibilità")
+        sf = tk.Frame(c4, bg=Cfg.BG_CARD)
+        sf.pack(fill="x", padx=14, pady=(4, 10))
+        tk.Label(sf, text="Lento", font=("Segoe UI", 8),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM).pack(side="left")
         self._smooth_var = tk.DoubleVar(value=Cfg.SMOOTH)
-        ttk.Scale(c4, from_=0.05, to=1.0, orient="horizontal",
+        ttk.Scale(sf, from_=0.05, to=1.0, orient="horizontal",
                   variable=self._smooth_var,
                   command=lambda v: setattr(Cfg, "SMOOTH", float(v))
-                  ).pack(fill="x", padx=16, pady=(4, 10))
+                  ).pack(fill="x", side="left", expand=True, padx=6)
+        tk.Label(sf, text="Veloce", font=("Segoe UI", 8),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM).pack(side="left")
 
     def _build_voice_tab(self, parent):
-        c1 = self._card(parent, "CONTROLLO VOCALE")
+        c1 = self._card(parent, "Controllo Vocale")
 
         srow = tk.Frame(c1, bg=Cfg.BG_CARD)
-        srow.pack(fill="x", padx=10, pady=(0, 4))
-        tk.Label(srow, text="Status:", font=("Segoe UI", 9),
-                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM).pack(side="left")
-        self._voice_dot = tk.Label(srow, text="●", font=("Segoe UI", 9),
-                 bg=Cfg.BG_CARD, fg="#ff4444")
-        self._voice_dot.pack(side="left", padx=4)
+        srow.pack(fill="x", padx=14, pady=(0, 4))
+        self._voice_dot = tk.Label(srow, text="●", font=("Segoe UI", 12),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM)
+        self._voice_dot.pack(side="left")
         self._voice_status_lbl = tk.Label(srow, text="OFFLINE",
-                 font=("Segoe UI", 9, "bold"), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM)
-        self._voice_status_lbl.pack(side="left")
+                 font=("Segoe UI", 10, "bold"), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM)
+        self._voice_status_lbl.pack(side="left", padx=6)
 
-        self._voice_btn = tk.Button(
-            c1, text="▶  ATTIVA VOCE",
-            font=("Segoe UI", 10, "bold"),
-            bg=Cfg.SUCCESS if self._voice.available else Cfg.TEXT_DIM,
-            fg="#000000",
-            relief="flat", bd=0,
-            cursor="hand2" if self._voice.available else "arrow",
-            padx=16, pady=8,
-            command=self._toggle_voice,
-            state="normal" if self._voice.available else "disabled")
-        self._voice_btn.pack(pady=8, ipadx=8)
+        vcolor = Cfg.SUCCESS if self._voice.available else Cfg.BG_MID
+        vstate = "normal" if self._voice.available else "disabled"
+        self._voice_btn = self._btn(c1, "ATTIVA VOCE", vcolor, self._toggle_voice)
+        self._voice_btn.configure(state=vstate)
+        self._voice_btn.pack(pady=8, padx=14, fill="x")
 
         if not self._voice.available:
-            tk.Label(c1,
-                     text="SpeechRecognition non trovato.\nEsegui: python install.py",
+            tk.Label(c1, text="SpeechRecognition non trovato. Esegui: python install.py",
                      font=("Segoe UI", 8), bg=Cfg.BG_CARD, fg=Cfg.WARNING,
-                     justify="center").pack(pady=(0, 8))
-        else:
-            tk.Label(c1,
-                     text="Lingua: Italiano (it-IT)\nParla chiaramente al microfono",
-                     font=("Segoe UI", 8), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM,
-                     justify="center").pack(pady=(0, 8))
+                     wraplength=300).pack(padx=14, pady=(0, 8))
 
-        c2 = self._card(parent, "ULTIMO RICONOSCIUTO")
+        c2 = self._card(parent, "Ultimo Riconosciuto")
         self._voice_last_lbl = tk.Label(
             c2, text="—",
-            font=("Segoe UI", 9, "italic"), bg=Cfg.BG_CARD, fg=Cfg.TEXT,
-            wraplength=300, justify="center")
-        self._voice_last_lbl.pack(padx=8, pady=(0, 10))
+            font=("Segoe UI", 10), bg=Cfg.BG_CARD, fg=Cfg.TEXT,
+            wraplength=300, anchor="w")
+        self._voice_last_lbl.pack(padx=14, pady=(0, 10), anchor="w")
 
-        c3 = self._card(parent, "CRONOLOGIA (ultimi 6)")
+        c3 = self._card(parent, "Cronologia")
         self._voice_log_labels = []
         for _ in range(6):
             lbl = tk.Label(c3, text="", font=("Consolas", 8),
                            bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, anchor="w")
-            lbl.pack(fill="x", padx=10, pady=1)
+            lbl.pack(fill="x", padx=14, pady=1)
             self._voice_log_labels.append(lbl)
-        tk.Label(c3, text="", bg=Cfg.BG_CARD).pack(pady=2)
+        tk.Frame(c3, bg=Cfg.BG_CARD, height=6).pack()
 
-        c4 = self._card(parent, "ESEMPI COMANDI VOCALI")
-        for ex in ("apri youtube", "cerca meteo Milano",
-                   "crea cartella lavoro", "copia / incolla / salva",
-                   "screenshot", "zoom avanti / zoom indietro",
-                   "scrivi ciao mondo", "volume su / muto"):
-            tk.Label(c4, text=f"  • {ex}", font=("Segoe UI", 8),
+        c4 = self._card(parent, "Comandi Esempio")
+        cmds = ["apri youtube", "cerca meteo Milano", "crea cartella lavoro",
+                "copia / incolla / salva", "screenshot", "zoom avanti / indietro",
+                "scrivi ciao mondo", "volume su / muto"]
+        for ex in cmds:
+            tk.Label(c4, text=f"  {ex}", font=("Segoe UI", 8),
                      bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, anchor="w"
-                     ).pack(fill="x", padx=4)
-        tk.Label(c4, text="", bg=Cfg.BG_CARD).pack(pady=3)
+                     ).pack(fill="x", padx=14)
+        tk.Frame(c4, bg=Cfg.BG_CARD, height=8).pack()
 
     def _build_guide_tab(self, parent):
-        tk.Label(parent, text="GUIDA GESTI",
-                 font=("Segoe UI", 9, "bold"),
-                 bg=Cfg.BG_MID, fg=Cfg.TEXT_DIM).pack(pady=(8, 4))
-
-        DOM_COL, MOD_COL = Cfg.ACCENT, Cfg.PURPLE
-        GUIDE = [
-            ("☝ Indice solo",         "Cursore mouse",       DOM_COL),
-            ("🤏 Pinch i+p",          "Click sx / drag",     DOM_COL),
-            ("🤏 Pinch m+p",          "Click dx",            DOM_COL),
-            ("✌ Due dita",            "Scroll verticale",    DOM_COL),
-            ("🤌 3 dita su",          "Copia  Ctrl+C",       DOM_COL),
-            ("✋ 4 dita su",          "Incolla  Ctrl+V",     DOM_COL),
-            ("👍 Solo pollice",       "Doppio click",        DOM_COL),
-            ("🤘 Rock",               "Annulla  Ctrl+Z",     DOM_COL),
-            ("🤙 Pollice+mignolo",    "Salva  Ctrl+S",       DOM_COL),
-            ("🖐 Palmo+velocità",     "Swipe ←→  Alt+←/→",  DOM_COL),
-            ("──── Mano sinistra ────","(modificatore)",      MOD_COL),
-            ("🖐 L: palmo",           "Congela cursore",     MOD_COL),
-            ("✊ L: pugno",           "Scroll = zoom",       MOD_COL),
-            ("✌ L: due dita",        "Cursore = h-scroll",  MOD_COL),
-            ("🤘 L: rock",            "Alt+Tab",             MOD_COL),
-            ("👍 L: pollice",         "Arma click centrale", MOD_COL),
-            ("🤏+🤏 entrambi pinch", "Zoom in/out",         Cfg.SUCCESS),
+        c = self._card(parent, "Mano Destra — Azioni")
+        DOM = [
+            ("Indice solo",       "Cursore"),
+            ("Pinch indice",      "Click / Drag"),
+            ("Pinch medio",       "Click destro"),
+            ("Due dita",          "Scroll"),
+            ("Tre dita",          "Copia"),
+            ("Quattro dita",      "Incolla"),
+            ("Pollice solo",      "Doppio click"),
+            ("Rock",              "Annulla"),
+            ("Pollice+mignolo",   "Salva"),
+            ("Palmo+swipe",       "Avanti / Indietro"),
         ]
-        for g, a, col in GUIDE:
-            r = tk.Frame(parent, bg=Cfg.BG_MID)
-            r.pack(fill="x", padx=8, pady=1)
-            tk.Label(r, text=g, font=("Segoe UI", 8),
-                     bg=Cfg.BG_MID, fg=col, width=22, anchor="w").pack(side="left")
-            tk.Label(r, text=a, font=("Segoe UI", 8),
-                     bg=Cfg.BG_MID, fg=Cfg.TEXT_DIM, anchor="w").pack(side="left")
+        for g, a in DOM:
+            r = tk.Frame(c, bg=Cfg.BG_CARD)
+            r.pack(fill="x", padx=14, pady=1)
+            tk.Label(r, text=g, font=("Segoe UI", 9),
+                     bg=Cfg.BG_CARD, fg=Cfg.TEXT, width=18, anchor="w").pack(side="left")
+            tk.Label(r, text=a, font=("Segoe UI", 9),
+                     bg=Cfg.BG_CARD, fg=Cfg.ACCENT, anchor="w").pack(side="left")
+        tk.Frame(c, bg=Cfg.BG_CARD, height=6).pack()
+
+        c2 = self._card(parent, "Mano Sinistra — Modalità")
+        MOD = [
+            ("Palmo aperto",   "Congela cursore"),
+            ("Pugno",          "Zoom mode"),
+            ("Due dita",       "Scroll orizzontale"),
+            ("Rock",           "Alt+Tab"),
+            ("Pollice",        "Click centrale"),
+            ("Entrambi pinch", "Zoom in/out"),
+        ]
+        for g, a in MOD:
+            r = tk.Frame(c2, bg=Cfg.BG_CARD)
+            r.pack(fill="x", padx=14, pady=1)
+            tk.Label(r, text=g, font=("Segoe UI", 9),
+                     bg=Cfg.BG_CARD, fg=Cfg.TEXT, width=18, anchor="w").pack(side="left")
+            tk.Label(r, text=a, font=("Segoe UI", 9),
+                     bg=Cfg.BG_CARD, fg=Cfg.PURPLE, anchor="w").pack(side="left")
+        tk.Frame(c2, bg=Cfg.BG_CARD, height=6).pack()
 
     def _build_learn_tab(self, parent):
         _ACTIONS = [
@@ -1608,74 +1629,62 @@ class Dashboard(tk.Tk):
             ("create_folder", "Crea cartella"),
         ]
 
-        # ── registra gesto ────────────────────────────────────
-        c1 = self._card(parent, "REGISTRA NUOVO GESTO")
-        row_n = tk.Frame(c1, bg=Cfg.BG_CARD)
-        row_n.pack(fill="x", padx=10, pady=2)
-        tk.Label(row_n, text="Nome:", font=("Segoe UI", 9),
-                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=7, anchor="w").pack(side="left")
+        c1 = self._card(parent, "Nuovo Gesto Personalizzato")
+
+        def _field(parent_f, label, var):
+            r = tk.Frame(parent_f, bg=Cfg.BG_CARD)
+            r.pack(fill="x", padx=14, pady=3)
+            tk.Label(r, text=label, font=("Segoe UI", 9),
+                     bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=8, anchor="w").pack(side="left")
+            e = tk.Entry(r, textvariable=var,
+                     font=("Segoe UI", 9), bg=Cfg.BG_MID, fg=Cfg.TEXT,
+                     insertbackground=Cfg.TEXT, relief="flat", bd=2)
+            e.pack(side="left", fill="x", expand=True, padx=(4, 0))
+            return e
+
         self._learn_name_var = tk.StringVar()
-        tk.Entry(row_n, textvariable=self._learn_name_var,
-                 font=("Segoe UI", 9), bg=Cfg.BG_MID, fg=Cfg.TEXT,
-                 insertbackground=Cfg.TEXT, relief="flat", width=14
-                 ).pack(side="left", padx=4)
+        _field(c1, "Nome", self._learn_name_var)
 
         row_a = tk.Frame(c1, bg=Cfg.BG_CARD)
-        row_a.pack(fill="x", padx=10, pady=2)
-        tk.Label(row_a, text="Azione:", font=("Segoe UI", 9),
-                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=7, anchor="w").pack(side="left")
+        row_a.pack(fill="x", padx=14, pady=3)
+        tk.Label(row_a, text="Azione", font=("Segoe UI", 9),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=8, anchor="w").pack(side="left")
         self._learn_action_var = tk.StringVar(value=_ACTIONS[0][0])
         opt = tk.OptionMenu(row_a, self._learn_action_var,
                             *[a[0] for a in _ACTIONS])
-        opt.configure(bg=Cfg.BG_MID, fg=Cfg.TEXT, font=("Segoe UI", 8),
-                      activebackground=Cfg.BG_CARD, relief="flat", bd=0)
-        opt["menu"].configure(bg=Cfg.BG_MID, fg=Cfg.TEXT)
-        opt.pack(side="left", padx=4)
+        opt.configure(bg=Cfg.BG_MID, fg=Cfg.TEXT, font=("Segoe UI", 9),
+                      activebackground=Cfg.BG_CARD, relief="flat", bd=0,
+                      highlightthickness=0)
+        opt["menu"].configure(bg=Cfg.BG_MID, fg=Cfg.TEXT, font=("Segoe UI", 9))
+        opt.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
-        row_v = tk.Frame(c1, bg=Cfg.BG_CARD)
-        row_v.pack(fill="x", padx=10, pady=2)
-        tk.Label(row_v, text="Arg:", font=("Segoe UI", 9),
-                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=7, anchor="w").pack(side="left")
         self._learn_arg_var = tk.StringVar()
-        tk.Entry(row_v, textvariable=self._learn_arg_var,
-                 font=("Segoe UI", 9), bg=Cfg.BG_MID, fg=Cfg.TEXT,
-                 insertbackground=Cfg.TEXT, relief="flat", width=14
-                 ).pack(side="left", padx=4)
+        _field(c1, "Argomento", self._learn_arg_var)
 
-        self._learn_rec_btn = tk.Button(
-            c1, text="● REGISTRA  (3 sec countdown)",
-            font=("Segoe UI", 9, "bold"), bg=Cfg.ACCENT, fg=Cfg.TEXT,
-            relief="flat", bd=0, cursor="hand2", pady=6,
-            command=self._start_recording)
-        self._learn_rec_btn.pack(pady=8, fill="x", padx=12)
+        self._learn_rec_btn = self._btn(c1, "REGISTRA  (3s)", Cfg.ACCENT, self._start_recording)
+        self._learn_rec_btn.pack(pady=10, padx=14, fill="x")
 
-        # progress bar (canvas-based)
         self._learn_prog_frame = tk.Frame(c1, bg=Cfg.BG_CARD)
-        self._learn_prog_frame.pack(fill="x", padx=12, pady=(0, 6))
+        self._learn_prog_frame.pack(fill="x", padx=14, pady=(0, 6))
         self._learn_prog_lbl = tk.Label(
             self._learn_prog_frame, text="",
             font=("Segoe UI", 8), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM)
         self._learn_prog_lbl.pack(side="right")
         self._learn_prog_bar = tk.Canvas(
-            self._learn_prog_frame, height=6, bg=Cfg.BG_MID,
+            self._learn_prog_frame, height=4, bg=Cfg.BG_MID,
             highlightthickness=0)
         self._learn_prog_bar.pack(fill="x", side="left", expand=True, padx=(0, 6))
 
-        # ── lista gesti appresi ───────────────────────────────
-        c2 = self._card(parent, "GESTI APPRESI")
+        c2 = self._card(parent, "Gesti Appresi")
         self._learn_list_frame = tk.Frame(c2, bg=Cfg.BG_CARD)
-        self._learn_list_frame.pack(fill="x", padx=8, pady=4)
+        self._learn_list_frame.pack(fill="x", padx=14, pady=4)
         self._learn_listbox = tk.Listbox(
             self._learn_list_frame, bg=Cfg.BG_MID, fg=Cfg.TEXT,
-            font=("Consolas", 8), relief="flat", selectbackground=Cfg.ACCENT,
-            selectforeground=Cfg.TEXT, height=6, bd=0)
+            font=("Segoe UI", 9), relief="flat", selectbackground=Cfg.ACCENT,
+            selectforeground="#ffffff", height=5, bd=0)
         self._learn_listbox.pack(fill="x")
-        tk.Button(
-            c2, text="🗑  Elimina selezionato",
-            font=("Segoe UI", 8), bg=Cfg.BG_MID, fg=Cfg.ACCENT,
-            relief="flat", bd=0, cursor="hand2",
-            command=self._delete_gesture
-        ).pack(pady=(2, 8))
+        self._btn(c2, "ELIMINA SELEZIONATO", Cfg.BG_MID, self._delete_gesture, fg=Cfg.ACCENT
+                  ).pack(pady=(4, 10), padx=14, fill="x")
         self._refresh_gesture_list()
 
     def _start_recording(self):
@@ -1827,8 +1836,10 @@ class Dashboard(tk.Tk):
                     self._act_lbl.configure(text=self._cam.action)
                     n = self._cam.n_hands
                     self._hands_lbl.configure(
-                        text=(f"{'✋' * n}  {n} man{'i' if n != 1 else 'o'}"
+                        text=(f"{n} man{'i' if n != 1 else 'o'}"
                               if n else ""))
+                    self._fps_lbl.configure(
+                        text=f"FPS: {self._cam.fps:.0f}")
         except Exception:
             pass
 
@@ -1876,32 +1887,30 @@ class SplashScreen(tk.Toplevel):
         super().__init__(parent)
         self.overrideredirect(True)
 
-        w, h = 420, 240
+        w, h = 440, 200
         sx = (parent.winfo_screenwidth()  - w) // 2
         sy = (parent.winfo_screenheight() - h) // 2
         self.geometry(f"{w}x{h}+{sx}+{sy}")
 
         self.configure(bg=Cfg.BG_DARK)
-        tk.Label(self, text="✋", font=("Segoe UI", 48),
-                 bg=Cfg.BG_DARK, fg=Cfg.ACCENT).pack(pady=(24, 0))
+        tk.Label(self, text="HGC",
+                 font=("Segoe UI", 36, "bold"),
+                 bg=Cfg.BG_DARK, fg=Cfg.ACCENT).pack(pady=(30, 0))
         tk.Label(self, text="Hand Gesture Control",
-                 font=("Segoe UI", 18, "bold"),
-                 bg=Cfg.BG_DARK, fg=Cfg.TEXT).pack()
-        tk.Label(self, text="v2  —  Caricamento...",
-                 font=("Segoe UI", 10),
-                 bg=Cfg.BG_DARK, fg=Cfg.TEXT_DIM).pack()
-        self._bar = tk.Canvas(self, width=w - 80, height=6,
+                 font=("Segoe UI", 12),
+                 bg=Cfg.BG_DARK, fg=Cfg.TEXT_DIM).pack(pady=(0, 20))
+        self._bar = tk.Canvas(self, width=w - 100, height=3,
                               bg=Cfg.BG_MID, highlightthickness=0)
-        self._bar.pack(pady=(20, 0))
+        self._bar.pack()
         self._progress = 0
         self._animate()
 
     def _animate(self):
-        self._progress = min(self._progress + 12, 340)
+        self._progress = min(self._progress + 10, 340)
         self._bar.delete("all")
-        self._bar.create_rectangle(0, 0, self._progress, 6, fill=Cfg.ACCENT)
+        self._bar.create_rectangle(0, 0, self._progress, 3, fill=Cfg.ACCENT, outline="")
         if self._progress < 340:
-            self.after(50, self._animate)
+            self.after(40, self._animate)
 
     def done(self):
         self.destroy()
