@@ -339,27 +339,27 @@ class TestGestureStabiliser(unittest.TestCase):
     def test_not_stable_before_window_full(self):
         gs = GestureStabiliser(window=6, enter_thresh=0.6)
         for _ in range(5):
-            gs.feed("CURSOR")
-        self.assertEqual(gs.stable, "NONE")
+            gs.feed(G.CURSOR)
+        self.assertEqual(gs.stable, G.NONE)
 
     def test_stable_after_majority(self):
         gs = GestureStabiliser(window=6, enter_thresh=0.6)
         for _ in range(6):
-            gs.feed("CURSOR")
-        self.assertEqual(gs.stable, "CURSOR")
+            gs.feed(G.CURSOR)
+        self.assertEqual(gs.stable, G.CURSOR)
 
     def test_minority_not_confirmed(self):
         gs = GestureStabiliser(window=6, enter_thresh=0.6)
-        for g in ["CURSOR", "CURSOR", "CURSOR", "SCROLL", "SCROLL", "SCROLL"]:
+        for g in [G.CURSOR, G.CURSOR, G.CURSOR, G.SCROLL, G.SCROLL, G.SCROLL]:
             gs.feed(g)
-        self.assertNotEqual(gs.stable, "SCROLL")
+        self.assertNotEqual(gs.stable, G.SCROLL)
 
     def test_reset_clears(self):
         gs = GestureStabiliser(window=6, enter_thresh=0.6)
         for _ in range(6):
-            gs.feed("PINCH")
+            gs.feed(G.PINCH)
         gs.reset()
-        self.assertEqual(gs.stable, "NONE")
+        self.assertEqual(gs.stable, G.NONE)
 
     def test_transition(self):
         gs = GestureStabiliser(window=4, enter_thresh=0.75)

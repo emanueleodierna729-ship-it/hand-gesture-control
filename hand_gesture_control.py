@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Hand Gesture Control System  v3
-Dual-hand · One Euro Filter · Angle-based finger detection · Hysteresis stabilisation
+HGC — Controllo Gestuale  v3
+Due mani · One Euro Filter · Rilevamento angolare dita · Stabilizzazione a isteresi
 """
 
 from __future__ import annotations
@@ -238,6 +238,8 @@ class HandCalibrator:
 #  Prevents flickering: harder to ENTER a new gesture, easier to STAY
 # ─────────────────────────────────────────────────────────────
 class GestureStabiliser:
+    NONE = "NESSUNO"
+
     def __init__(self, window: int = Cfg.GEST_WIN,
                  enter_thresh: float = Cfg.GEST_THRESH,
                  exit_thresh: float = Cfg.GEST_EXIT):
@@ -245,7 +247,7 @@ class GestureStabiliser:
         self._enter_thresh = enter_thresh
         self._exit_thresh  = exit_thresh
         self._win          = window
-        self.stable        = "NONE"
+        self.stable        = self.NONE
 
     def feed(self, gesture: str) -> str:
         self._hist.append(gesture)
@@ -256,7 +258,7 @@ class GestureStabiliser:
         top, top_cnt = counts.most_common(1)[0]
         top_ratio = top_cnt / self._win
 
-        if self.stable == "NONE":
+        if self.stable == self.NONE:
             if top_ratio >= self._enter_thresh:
                 self.stable = top
         elif top != self.stable:
@@ -268,7 +270,7 @@ class GestureStabiliser:
 
     def reset(self):
         self._hist.clear()
-        self.stable = "NONE"
+        self.stable = self.NONE
 
 
 # ─────────────────────────────────────────────────────────────
@@ -356,29 +358,29 @@ class HandTracker:
 #  GESTURE CONSTANTS
 # ─────────────────────────────────────────────────────────────
 class G:
-    NONE        = "NONE"
-    CURSOR      = "CURSOR"         # ☝ index only           → move
-    PINCH       = "PINCH"          # 🤏 thumb+index close   → click/drag
-    PINCH_RIGHT = "PINCH_RIGHT"    # 🤏 thumb+middle close  → right-click
-    SCROLL      = "SCROLL"         # ✌ index+middle         → scroll
-    COPY        = "COPY"           # 3 fingers              → Ctrl+C
-    PASTE       = "PASTE"          # 4 fingers              → Ctrl+V
-    THUMB_UP    = "THUMB_UP"       # 👍 thumb only          → double-click
-    ROCK        = "ROCK"           # 🤘 index+pinky         → Ctrl+Z
-    SAVE        = "SAVE"           # 🤙 thumb+pinky         → Ctrl+S
-    FIST        = "FIST"           # ✊ all closed          → pause
-    OPEN_PALM   = "OPEN_PALM"      # 🖐 all open            → reset / swipe
-    SWIPE_L     = "SWIPE ←"        # open palm fast left    → Alt+Left
-    SWIPE_R     = "SWIPE →"        # open palm fast right   → Alt+Right
-    ZOOM_IN     = "ZOOM IN"        # ✌🤏 two-hand pinch out → Ctrl+scroll+
-    ZOOM_OUT    = "ZOOM OUT"       # two-hand pinch in      → Ctrl+scroll-
-    # modifier modes (left/non-dominant hand)
-    MOD_FREEZE  = "FREEZE"         # left OPEN_PALM → pause cursor
-    MOD_ZOOM    = "ZOOM MODE"      # left FIST      → right scroll = zoom
-    MOD_HSCROLL = "H-SCROLL"       # left SCROLL    → right cursor = hscroll
-    MOD_ALTTAB  = "ALT+TAB"        # left ROCK      → fire Alt+Tab
-    MOD_MIDDLE  = "MID.CLICK"      # left THUMB_UP  → next click = middle
-    UNKNOWN     = "UNKNOWN"
+    NONE        = "NESSUNO"
+    CURSOR      = "CURSORE"        # ☝ indice solo          → muovi
+    PINCH       = "PINCH"          # 🤏 pollice+indice      → click/drag
+    PINCH_RIGHT = "PINCH DX"       # 🤏 pollice+medio       → click destro
+    SCROLL      = "SCORRIMENTO"    # ✌ indice+medio         → scroll
+    COPY        = "COPIA"          # 3 dita                 → Ctrl+C
+    PASTE       = "INCOLLA"        # 4 dita                 → Ctrl+V
+    THUMB_UP    = "POLLICE SU"     # 👍 pollice solo        → doppio click
+    ROCK        = "ROCK"           # 🤘 indice+mignolo      → Ctrl+Z
+    SAVE        = "SALVA"          # 🤙 pollice+mignolo     → Ctrl+S
+    FIST        = "PUGNO"          # ✊ tutte chiuse        → pausa
+    OPEN_PALM   = "PALMO"          # 🖐 tutte aperte        → reset / swipe
+    SWIPE_L     = "SWIPE ←"        # palmo veloce sinistra  → Alt+Left
+    SWIPE_R     = "SWIPE →"        # palmo veloce destra    → Alt+Right
+    ZOOM_IN     = "ZOOM +"         # ✌🤏 due mani pinch out → Ctrl+scroll+
+    ZOOM_OUT    = "ZOOM −"         # due mani pinch in      → Ctrl+scroll-
+    # modalità modificatore (mano sinistra / non dominante)
+    MOD_FREEZE  = "BLOCCO"         # sx PALMO    → blocca cursore
+    MOD_ZOOM    = "MODO ZOOM"      # sx PUGNO    → scroll dx = zoom
+    MOD_HSCROLL = "SCORR.ORIZ."    # sx SCROLL   → cursore dx = hscroll
+    MOD_ALTTAB  = "ALT+TAB"        # sx ROCK     → Alt+Tab
+    MOD_MIDDLE  = "CLICK CENTR."   # sx POLLICE  → prossimo click = centrale
+    UNKNOWN     = "?"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -847,7 +849,7 @@ class DualHandProcessor:
                 self._pright = True
                 m.right_click()
                 self._reset_pinch_soft()
-                return "RIGHT CLICK"
+                return "CLICK DESTRO"
             self._scroll_ref = None
 
         elif g == G.SCROLL:
@@ -866,31 +868,31 @@ class DualHandProcessor:
             m.double_click()
             self._reset_pinch()
             self._scroll_ref = None
-            return "DOUBLE CLICK"
+            return "DOPPIO CLICK"
 
         elif g == G.COPY:
             self._reset_drag()
             if m.hotkey("ctrl", "c"):
                 self._reset_pinch()
-                return "COPY  Ctrl+C"
+                return "COPIA  Ctrl+C"
 
         elif g == G.PASTE:
             self._reset_drag()
             if m.hotkey("ctrl", "v"):
                 self._reset_pinch()
-                return "PASTE  Ctrl+V"
+                return "INCOLLA  Ctrl+V"
 
         elif g == G.ROCK:
             self._reset_drag()
             if m.hotkey("ctrl", "z"):
                 self._reset_pinch()
-                return "UNDO  Ctrl+Z"
+                return "ANNULLA  Ctrl+Z"
 
         elif g == G.SAVE:
             self._reset_drag()
             if m.hotkey("ctrl", "s"):
                 self._reset_pinch()
-                return "SAVE  Ctrl+S"
+                return "SALVA  Ctrl+S"
 
         elif g == G.FIST:
             self._reset_drag()
@@ -904,7 +906,7 @@ class DualHandProcessor:
                 self._reset_drag()
                 self._reset_pinch()
                 self._scroll_ref = None
-                return "LEFT CLICK"
+                return "CLICK"
             self._reset_drag()
             self._reset_pinch()
             self._scroll_ref = None
@@ -1178,15 +1180,15 @@ class CameraThread(threading.Thread):
 
         # Dominant gesture label
         col = (80, 220, 80) if dom_g not in (G.NONE, G.UNKNOWN) else (100, 100, 100)
-        cv2.putText(frame, f"DOM: {dom_g}", (8, 55),
+        cv2.putText(frame, f"DX: {dom_g}", (8, 55),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, col, 2)
 
-        # Modifier gesture label (second hand)
+        # Etichetta gesto modificatore (seconda mano)
         if mod_g not in (G.NONE, G.UNKNOWN, ""):
-            cv2.putText(frame, f"MOD: {mod_g}", (8, 82),
+            cv2.putText(frame, f"SX: {mod_g}", (8, 82),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 120, 255), 2)
 
-        # Action feedback centred
+        # Feedback azione centrato
         if action:
             (tw, _), _ = cv2.getTextSize(action, cv2.FONT_HERSHEY_SIMPLEX, 0.85, 2)
             cx = max(0, (w - tw) // 2)
@@ -1564,7 +1566,7 @@ class Dashboard(tk.Tk):
         self._loop()
 
     def _setup_window(self):
-        self.title("HGC — Hand Gesture Control")
+        self.title("HGC — Controllo Gestuale")
         self.configure(bg=Cfg.BG_DARK)
         self.geometry("1280x860")
         self.minsize(960, 680)
@@ -1599,7 +1601,7 @@ class Dashboard(tk.Tk):
         tk.Label(left_hdr, text="HGC",
                  font=(F, 24, "bold"),
                  bg=Cfg.BG_DARK, fg=Cfg.ACCENT).pack(side="left")
-        tk.Label(left_hdr, text=" Hand Gesture Control",
+        tk.Label(left_hdr, text=" Controllo Gestuale",
                  font=(F, 13),
                  bg=Cfg.BG_DARK, fg=Cfg.TEXT_SEC).pack(side="left", pady=(5, 0))
 
@@ -1742,7 +1744,7 @@ class Dashboard(tk.Tk):
         self._vk_btn = self._btn(c2, "MOSTRA TASTIERA", Cfg.BG_MID, self._toggle_vk, fg=Cfg.TEXT)
         self._vk_btn.pack(pady=(8, 12), padx=16, fill="x")
 
-        c3 = self._card(parent, "Sensibilita Cursore")
+        c3 = self._card(parent, "Sensibilità Cursore")
         sf = tk.Frame(c3, bg=Cfg.BG_CARD)
         sf.pack(fill="x", padx=16, pady=(4, 12))
         tk.Label(sf, text="Preciso", font=(F, 8),
@@ -1837,7 +1839,7 @@ class Dashboard(tk.Tk):
             _guide_row(c, g, a, Cfg.ACCENT)
         tk.Frame(c, bg=Cfg.BG_CARD, height=8).pack()
 
-        c2 = self._card(parent, "Mano Sinistra — Modalita")
+        c2 = self._card(parent, "Mano Sinistra — Modalità")
         for g, a in [
             ("Palmo aperto",   "Congela cursore"),
             ("Pugno",          "Zoom mode"),
@@ -2134,7 +2136,7 @@ class SplashScreen(tk.Toplevel):
         tk.Label(self, text="HGC",
                  font=(Cfg._F, 42, "bold"),
                  bg=Cfg.BG_DARK, fg=Cfg.ACCENT).pack()
-        tk.Label(self, text="Hand Gesture Control",
+        tk.Label(self, text="Controllo Gestuale",
                  font=(Cfg._F, 13),
                  bg=Cfg.BG_DARK, fg=Cfg.TEXT_SEC).pack(pady=(2, 0))
         tk.Label(self, text="v3",
