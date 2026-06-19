@@ -1,4 +1,4 @@
-# ✋ Hand Gesture Control v2
+inviami ✋ Hand Gesture Control v2
 
 > Controlla il tuo PC con la **webcam** e i **gesti delle mani** — nessun hardware aggiuntivo.
 
