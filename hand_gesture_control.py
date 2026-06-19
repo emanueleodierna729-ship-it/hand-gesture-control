@@ -236,12 +236,11 @@ class GestureStabiliser:
         top, top_cnt = counts.most_common(1)[0]
         top_ratio = top_cnt / self._win
 
-        if top == self.stable:
+        if top != self.stable:
             cur_ratio = counts.get(self.stable, 0) / self._win
-            if cur_ratio < self._exit_thresh:
+            if cur_ratio < self._exit_thresh and top_ratio >= self._enter_thresh:
                 self.stable = top
-        elif top_ratio >= self._enter_thresh:
-            self.stable = top
+        # top == self.stable → stay, no action needed
 
         return self.stable
 

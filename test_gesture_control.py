@@ -355,6 +355,28 @@ class TestGestureStabiliser(unittest.TestCase):
             gs.feed(g)
         self.assertEqual(gs.stable, "B")
 
+    def test_hysteresis_exit(self):
+        gs = GestureStabiliser(window=5, enter_thresh=0.6, exit_thresh=0.4)
+        for _ in range(5):
+            gs.feed("A")
+        self.assertEqual(gs.stable, "A")
+        # Feed mostly B with some A — A drops below exit (1/5=0.2 < 0.4)
+        # and B exceeds enter (4/5=0.8 >= 0.6) → should transition to B
+        for _ in range(4):
+            gs.feed("B")
+        gs.feed("A")
+        self.assertEqual(gs.stable, "B")
+
+    def test_hysteresis_no_premature_exit(self):
+        gs = GestureStabiliser(window=5, enter_thresh=0.6, exit_thresh=0.4)
+        for _ in range(5):
+            gs.feed("A")
+        self.assertEqual(gs.stable, "A")
+        # Feed mix where A stays above exit threshold → should NOT transition
+        for g in ["B", "A", "A", "B", "A"]:
+            gs.feed(g)
+        self.assertEqual(gs.stable, "A")
+
 
 # ─────────────────────────────────────────────────────────────
 #  TEST: VelocityTracker
