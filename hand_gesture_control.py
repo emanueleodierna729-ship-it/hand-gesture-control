@@ -286,11 +286,11 @@ class GestureRecogniser:
         d_tm = self.pinch(lm, self.H.THUMB_TIP, self.H.MIDDLE_TIP)
         d_tp = self.pinch(lm, self.H.THUMB_TIP, self.H.PINKY_TIP)
 
-        if d_ti < Cfg.PINCH_THRESH:
+        if d_ti < Cfg.PINCH_THRESH and idx and not mid and not ring and not pinky:
             return G.PINCH
-        if d_tm < Cfg.PINCH_THRESH * 1.2:
+        if d_tm < Cfg.PINCH_THRESH * 1.2 and mid and d_ti >= Cfg.PINCH_THRESH:
             return G.PINCH_RIGHT
-        if d_tp < Cfg.PINCH_THRESH * 1.3 and not idx and not mid and not ring:
+        if d_tp < Cfg.PINCH_THRESH * 1.3 and pinky and not idx and not mid and not ring:
             return G.SAVE
 
         if idx and not mid and not ring and not pinky:
