@@ -51,19 +51,19 @@ class Cfg:
     SCROLL_SENS  = 18
     CLICK_CD     = 0.30
     SHORTCUT_CD  = 0.70
-    DWELL_MS     = 30
+    DWELL_MS     = 20             # reduced for lower latency
 
-    # ── NEW: Landmark EMA smoothing ──
-    LMARK_ALPHA  = 0.40           # higher = more responsive, less smooth
+    # ── Landmark EMA smoothing ── (optimized for velocity)
+    LMARK_ALPHA  = 0.55           # increased from 0.40 for faster responsiveness
 
-    # ── NEW: Temporal gesture stabilisation ──
-    GEST_WIN     = 6              # frames in voting window
-    GEST_THRESH  = 0.60           # fraction needed to confirm gesture
+    # ── Temporal gesture stabilisation ── (optimized for low-latency)
+    GEST_WIN     = 4              # reduced from 6 for faster confirmation
+    GEST_THRESH  = 0.75           # increased from 0.60 for precision
 
-    # ── NEW: Swipe detection ──
+    # ── Swipe detection ──
     SWIPE_VEL    = 0.65           # normalised units/second threshold
 
-    # ── NEW: Two-hand pinch zoom ──
+    # ── Two-hand pinch zoom ──
     ZOOM_DEAD    = 0.018          # dead-zone for wrist-distance delta
     ZOOM_CD      = 0.12           # seconds between zoom steps
 
@@ -102,10 +102,11 @@ class LandmarkSmoother:
             self._state[key] = lm
             return lm
         a, prev = self._a, self._state[key]
+        a1 = 1.0 - a
         out = [
-            (prev[i][0] + a * (lm[i][0] - prev[i][0]),
-             prev[i][1] + a * (lm[i][1] - prev[i][1]),
-             prev[i][2] + a * (lm[i][2] - prev[i][2]))
+            (prev[i][0] * a1 + lm[i][0] * a,
+             prev[i][1] * a1 + lm[i][1] * a,
+             prev[i][2] * a1 + lm[i][2] * a)
             for i in range(len(lm))
         ]
         self._state[key] = out
@@ -256,6 +257,9 @@ class G:
 # ─────────────────────────────────────────────────────────────
 class GestureRecogniser:
     H = HandTracker  # alias
+    _PINCH_TI_THRESH = Cfg.PINCH_THRESH
+    _PINCH_TM_THRESH = Cfg.PINCH_THRESH * 1.2
+    _PINCH_TP_THRESH = Cfg.PINCH_THRESH * 1.3
 
     def fingers_up(self, lm: list) -> list[bool]:
         """Returns [thumb, index, middle, ring, pinky] True = extended."""
@@ -281,17 +285,23 @@ class GestureRecogniser:
 
         f = self.fingers_up(lm)
         thumb, idx, mid, ring, pinky = f
+        finger_count = sum(f)
 
         d_ti = self.pinch(lm, self.H.THUMB_TIP, self.H.INDEX_TIP)
         d_tm = self.pinch(lm, self.H.THUMB_TIP, self.H.MIDDLE_TIP)
         d_tp = self.pinch(lm, self.H.THUMB_TIP, self.H.PINKY_TIP)
 
-        if d_ti < Cfg.PINCH_THRESH and idx and not mid and not ring and not pinky:
+        if d_ti < self._PINCH_TI_THRESH and idx and not mid and not ring and not pinky:
             return G.PINCH
-        if d_tm < Cfg.PINCH_THRESH * 1.2 and mid and d_ti >= Cfg.PINCH_THRESH:
+        if d_tm < self._PINCH_TM_THRESH and mid and d_ti >= self._PINCH_TI_THRESH:
             return G.PINCH_RIGHT
-        if d_tp < Cfg.PINCH_THRESH * 1.3 and pinky and not idx and not mid and not ring:
+        if d_tp < self._PINCH_TP_THRESH and pinky and not idx and not mid and not ring:
             return G.SAVE
+
+        if finger_count == 0:
+            return G.FIST
+        if finger_count == 5:
+            return G.OPEN_PALM
 
         if idx and not mid and not ring and not pinky:
             return G.CURSOR
@@ -305,10 +315,6 @@ class GestureRecogniser:
             return G.THUMB_UP
         if idx and pinky and not mid and not ring:
             return G.ROCK
-        if sum(f) == 0:
-            return G.FIST
-        if sum(f) == 5:
-            return G.OPEN_PALM
 
         return G.UNKNOWN
 
