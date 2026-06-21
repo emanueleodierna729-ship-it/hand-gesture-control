@@ -15,3 +15,26 @@ Thumbs.db
 *.command
 avvia.bat
 HandGestureControl.desktop
+
+# Node.js and npm
+/node_modules/
+
+# Development tools
+/.devtools
+/.idea/
+
+# Version control
+/.git/
+/.hg/
+/.svn/
+
+# Build caches
+/.sass-cache/
+/.cache/
+/.project/
+/.next/
+
+# Windows specific
+/ehthumbs.db$
+/Desktop.ini$
+/$RECYCLE.BIN/
