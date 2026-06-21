@@ -1409,6 +1409,16 @@ class GestureDatabase:
     def sample_count(self, name: str) -> int:
         return len(self._d.get(name, {}).get("samples", []))
 
+    def to_numpy(self):
+        X, y = [], []
+        for name, entry in self._d.items():
+            for fv in entry.get("samples", []):
+                X.append(fv)
+                y.append(name)
+        if not X:
+            return None, []
+        return X, y
+
     def save(self):
         try:
             with open(self.DB_FILE, "w", encoding="utf-8") as f:
@@ -1496,16 +1506,104 @@ class GestureRecorder:
 
 
 # ─────────────────────────────────────────────────────────────
-#  CUSTOM GESTURE RECOGNISER  — k-NN over user-trained samples
+#  GESTURE CLASSIFIER  — ML-based (RandomForest / fallback k-NN)
+#  Trains automatically from GestureDatabase samples
 #  Falls back to hardcoded rules when no custom match found
 # ─────────────────────────────────────────────────────────────
-class CustomGestureRecogniser(GestureRecogniser):
-    K           = 3
-    CONF_THRESH = 0.12   # max L2 distance to accept a custom match
+class GestureClassifierML:
+    """RandomForest classifier over 20-dim feature vectors.
+    Auto-trains when samples change; persists model to disk."""
+
+    MODEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "gesture_model.pkl")
+    MIN_SAMPLES_PER_CLASS = 5
+    CONF_THRESH = 0.55
 
     def __init__(self, db: GestureDatabase):
+        self._db     = db
+        self._model  = None
+        self._labels: list[str] = []
+        self._n_trained = 0
+        self._load_model()
+
+    def train(self) -> bool:
+        from sklearn.ensemble import RandomForestClassifier
+        X, y = self._db.to_numpy()
+        if X is None or len(set(y)) < 1:
+            self._model = None
+            self._labels = []
+            self._n_trained = 0
+            return False
+
+        class_counts = Counter(y)
+        valid_classes = {c for c, n in class_counts.items()
+                         if n >= self.MIN_SAMPLES_PER_CLASS}
+        if not valid_classes:
+            return False
+
+        mask = [i for i, label in enumerate(y) if label in valid_classes]
+        X_f = [X[i] for i in mask]
+        y_f = [y[i] for i in mask]
+
+        clf = RandomForestClassifier(
+            n_estimators=80,
+            max_depth=12,
+            min_samples_leaf=2,
+            random_state=42,
+            n_jobs=-1,
+        )
+        clf.fit(X_f, y_f)
+        self._model = clf
+        self._labels = sorted(set(y_f))
+        self._n_trained = len(X_f)
+        self._save_model()
+        return True
+
+    def predict(self, fv: list) -> str | None:
+        if self._model is None:
+            return None
+        try:
+            proba = self._model.predict_proba([fv])[0]
+            best_idx = int(proba.argmax())
+            if proba[best_idx] < self.CONF_THRESH:
+                return None
+            return self._model.classes_[best_idx]
+        except Exception:
+            return None
+
+    def needs_retrain(self) -> bool:
+        total = sum(self._db.sample_count(n) for n in self._db.list_names())
+        return total != self._n_trained
+
+    def _save_model(self):
+        try:
+            import joblib
+            joblib.dump({
+                "model": self._model,
+                "labels": self._labels,
+                "n_trained": self._n_trained,
+            }, self.MODEL_FILE)
+        except Exception:
+            pass
+
+    def _load_model(self):
+        try:
+            import joblib
+            data = joblib.load(self.MODEL_FILE)
+            self._model = data["model"]
+            self._labels = data["labels"]
+            self._n_trained = data.get("n_trained", 0)
+        except Exception:
+            self._model = None
+
+
+class CustomGestureRecogniser(GestureRecogniser):
+    def __init__(self, db: GestureDatabase):
         super().__init__()
-        self._db = db
+        self._db  = db
+        self._clf = GestureClassifierML(db)
+        if self._clf.needs_retrain():
+            self._clf.train()
 
     def feature_vector(self, lm: list) -> list:
         H    = HandTracker
@@ -1520,23 +1618,11 @@ class CustomGestureRecogniser(GestureRecogniser):
         if lm is None:
             return G.NONE
         fv   = self.feature_vector(lm)
-        name = self._knn(fv)
+        name = self._clf.predict(fv)
         return name if name else super().classify(lm, hand_label)
 
-    def _knn(self, fv: list) -> str | None:
-        candidates: list[tuple[float, str]] = []
-        for name, entry in self._db._d.items():
-            for sample in entry.get("samples", []):
-                d = math.sqrt(sum((a - b) ** 2 for a, b in zip(fv, sample)))
-                candidates.append((d, name))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda x: x[0])
-        k_nearest = candidates[: self.K]
-        if k_nearest[0][0] >= self.CONF_THRESH:
-            return None
-        best_name, _ = Counter(name for _, name in k_nearest).most_common(1)[0]
-        return best_name
+    def retrain(self) -> bool:
+        return self._clf.train()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1964,10 +2050,14 @@ class Dashboard(tk.Tk):
     def _recording_done_ui(self, name: str):
         n = self._db.sample_count(name)
         self._learn_prog_lbl.configure(
-            text=f"✓ {name}: {n} campioni", fg=Cfg.SUCCESS)
+            text=f"✓ {name}: {n} campioni — training ML...", fg=Cfg.WARNING)
         self._draw_progress_bar(1.0)
         self._learn_rec_btn.configure(state="normal", bg=Cfg.ACCENT)
         self._recorder.cancel()
+        ok = self._recogniser.retrain()
+        self._learn_prog_lbl.configure(
+            text=f"✓ {name}: {n} campioni — modello {'OK' if ok else 'servono più dati'}",
+            fg=Cfg.SUCCESS if ok else Cfg.WARNING)
         self._refresh_gesture_list()
 
     def _delete_gesture(self):
@@ -1977,6 +2067,7 @@ class Dashboard(tk.Tk):
         name = self._learn_listbox.get(sel[0]).split("  →")[0].strip()
         self._db.remove(name)
         self._db.save()
+        self._recogniser.retrain()
         self._refresh_gesture_list()
 
     def _refresh_gesture_list(self):

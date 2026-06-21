@@ -24,8 +24,11 @@ import unittest.mock as mock
 # Stub pyautogui so it never moves the real mouse
 sys.modules.setdefault("pyautogui", mock.MagicMock())
 
-# Stub numpy
-sys.modules.setdefault("numpy", mock.MagicMock())
+# numpy: use real module (needed by sklearn/scipy)
+try:
+    import numpy
+except ImportError:
+    sys.modules.setdefault("numpy", mock.MagicMock())
 
 # Stub cv2
 _cv2 = mock.MagicMock()
@@ -568,44 +571,52 @@ class TestGestureDatabase(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-#  TEST: CustomGestureRecogniser (k-NN)
+#  TEST: CustomGestureRecogniser (ML classifier)
 # ─────────────────────────────────────────────────────────────
 class TestCustomGestureRecogniser(unittest.TestCase):
-    def _make_db_with_gesture(self, name, lm):
+    def _make_db_with_gesture(self, name, lm, n_samples=10):
         db  = GestureDatabase()
         db._d = {}
         rec = CustomGestureRecogniser(db)
         fv  = rec.feature_vector(lm)
-        for _ in range(5):
-            db.add_sample(name, fv)
+        for i in range(n_samples):
+            noise = [v + (i * 0.001) for v in fv]
+            db.add_sample(name, noise)
         db.set_action(name, "screenshot")
+        rec.retrain()
         return db, rec
 
-    def test_exact_match_returns_name(self):
+    def test_trained_model_returns_name(self):
         lm = _flat_hand()
         db, rec = self._make_db_with_gesture("myopen", lm)
-        result = rec._knn(rec.feature_vector(lm))
+        result = rec._clf.predict(rec.feature_vector(lm))
         self.assertEqual(result, "myopen")
 
-    def test_no_match_returns_none(self):
-        lm_train = _flat_hand()
-        lm_test  = _fist_hand()
-        db, rec  = self._make_db_with_gesture("myopen", lm_train)
-        result   = rec._knn(rec.feature_vector(lm_test))
-        # fist is very different from open palm → should NOT match
-        self.assertNotEqual(result, "myopen")
+    def test_different_gesture_classified_correctly(self):
+        db  = GestureDatabase()
+        db._d = {}
+        rec = CustomGestureRecogniser(db)
+        fv_open = rec.feature_vector(_flat_hand())
+        fv_fist = rec.feature_vector(_fist_hand())
+        for i in range(10):
+            db.add_sample("myopen", [v + (i * 0.001) for v in fv_open])
+            db.add_sample("myfist", [v + (i * 0.001) for v in fv_fist])
+        db.set_action("myopen", "screenshot")
+        db.set_action("myfist", "hotkey")
+        rec.retrain()
+        self.assertEqual(rec._clf.predict(fv_open), "myopen")
+        self.assertEqual(rec._clf.predict(fv_fist), "myfist")
 
     def test_empty_db_returns_none(self):
         db  = GestureDatabase()
         db._d = {}
         rec = CustomGestureRecogniser(db)
-        self.assertIsNone(rec._knn([0.5] * 20))
+        self.assertIsNone(rec._clf.predict([0.5] * 20))
 
     def test_fallback_to_rules_when_no_custom(self):
         db  = GestureDatabase()
         db._d = {}
         rec = CustomGestureRecogniser(db)
-        # With empty db, should classify via parent rules
         self.assertEqual(rec.classify(None), G.NONE)
         self.assertEqual(rec.classify(_fist_hand()), G.FIST)
 
@@ -617,11 +628,26 @@ class TestCustomGestureRecogniser(unittest.TestCase):
         self.assertEqual(len(fv), 20)
 
     def test_custom_overrides_rules(self):
-        lm       = _fist_hand()   # normally → FIST
+        lm       = _fist_hand()
         db, rec  = self._make_db_with_gesture("custom_fist", lm)
         result   = rec.classify(lm)
-        # custom_fist should win over built-in FIST
         self.assertEqual(result, "custom_fist")
+
+    def test_retrain_returns_false_without_data(self):
+        db  = GestureDatabase()
+        db._d = {}
+        rec = CustomGestureRecogniser(db)
+        self.assertFalse(rec.retrain())
+
+    def test_to_numpy(self):
+        db = GestureDatabase()
+        db._d = {}
+        db.add_sample("a", [1.0] * 20)
+        db.add_sample("b", [2.0] * 20)
+        X, y = db.to_numpy()
+        self.assertEqual(len(X), 2)
+        self.assertIn("a", y)
+        self.assertIn("b", y)
 
 
 # ─────────────────────────────────────────────────────────────
