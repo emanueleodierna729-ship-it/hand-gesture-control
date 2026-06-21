@@ -1826,12 +1826,12 @@ class Dashboard(tk.Tk):
         c = self._card(parent, "Mano Destra — Azioni")
         for g, a in [
             ("Indice solo",       "Cursore"),
-            ("Pinch indice",      "Click / Drag"),
-            ("Pinch medio",       "Click destro"),
-            ("Due dita",          "Scroll"),
+            ("Pinch indice",      "Clic / Trascina"),
+            ("Pinch medio",       "Clic destro"),
+            ("Due dita",          "Scorrimento"),
             ("Tre dita",          "Copia  Ctrl+C"),
             ("Quattro dita",      "Incolla  Ctrl+V"),
-            ("Pollice solo",      "Doppio click"),
+            ("Pollice solo",      "Doppio clic"),
             ("Rock",              "Annulla  Ctrl+Z"),
             ("Pollice+mignolo",   "Salva  Ctrl+S"),
             ("Palmo+swipe",       "Avanti / Indietro"),
@@ -1842,11 +1842,11 @@ class Dashboard(tk.Tk):
         c2 = self._card(parent, "Mano Sinistra — Modalità")
         for g, a in [
             ("Palmo aperto",   "Congela cursore"),
-            ("Pugno",          "Zoom mode"),
-            ("Due dita",       "Scroll orizzontale"),
+            ("Pugno",          "Modalità zoom"),
+            ("Due dita",       "Scorrimento oriz."),
             ("Rock",           "Alt+Tab"),
-            ("Pollice",        "Click centrale"),
-            ("Entrambi pinch", "Zoom in/out"),
+            ("Pollice",        "Clic centrale"),
+            ("Entrambi pinch", "Zoom avanti/indietro"),
         ]:
             _guide_row(c2, g, a, Cfg.PURPLE)
         tk.Frame(c2, bg=Cfg.BG_CARD, height=8).pack()

@@ -10,3 +10,8 @@ gesture_report_*.txt
 build/
 dist/
 *.spec.bak
+hgc_apprendi.png
+hgc_controllo.png
+hgc_guida.png
+hgc_voce.png
+screenshot_ui.py
