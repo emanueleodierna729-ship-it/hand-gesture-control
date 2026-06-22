@@ -977,7 +977,7 @@ class VirtualKeyboard(tk.Toplevel):
 # ─────────────────────────────────────────────────────────────
 class CameraThread(threading.Thread):
     def __init__(self, app):
-        super().__init__(daemon=True)
+        super().__init__(daemon=False)
         self.app       = app
         self._running  = False
         self._flock    = threading.Lock()
@@ -1410,13 +1410,14 @@ class CustomGestureRecogniser(GestureRecogniser):
         candidates: list[tuple[float, str]] = []
         for name, entry in self._db._d.items():
             for sample in entry.get("samples", []):
-                d = math.sqrt(sum((a - b) ** 2 for a, b in zip(fv, sample)))
-                candidates.append((d, name))
+                d_sq = sum((a - b) ** 2 for a, b in zip(fv, sample))
+                if d_sq < self.CONF_THRESH ** 2:
+                    candidates.append((d_sq, name))
         if not candidates:
             return None
         candidates.sort(key=lambda x: x[0])
         k_nearest = candidates[: self.K]
-        if k_nearest[0][0] >= self.CONF_THRESH:
+        if k_nearest[0][0] >= (self.CONF_THRESH ** 2):
             return None
         best_name, _ = Counter(name for _, name in k_nearest).most_common(1)[0]
         return best_name
@@ -1918,6 +1919,7 @@ class Dashboard(tk.Tk):
     def _on_close(self):
         if self._cam:
             self._cam.stop_capture()
+            self._cam.join(timeout=2.0)
         self._voice.stop()
         self._db.save()
         self.destroy()
