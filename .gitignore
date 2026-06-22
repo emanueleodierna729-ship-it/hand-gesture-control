@@ -10,6 +10,8 @@ build/
 *.db
 *.json
 !gesture_*.json
+gesture_report_*.json
+gesture_report_*.txt
 .DS_Store
 Thumbs.db
 *.command
