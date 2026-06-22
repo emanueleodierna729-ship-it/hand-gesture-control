@@ -43,29 +43,34 @@ class Cfg:
     MAX_HANDS    = 2              # now supports two hands
     DETECT_CONF  = 0.72
     TRACK_CONF   = 0.55
+    FPS_TARGET   = 60             # target 60 fps for lower latency
+    MODEL_COMPLEX = 0             # 0=lite, 1=full (faster inference with lite)
+
+    # ── One-Euro Filter (cursor smoothing) ──
+    CURSOR_FREQ  = 60             # Hz, matches camera FPS
+    CURSOR_BETA  = 0.01           # lower = more lag, higher = noisier
+    CURSOR_DCUTOFF = 1.0          # derivative cutoff frequency
+
+    # ── Gesture stabilisation (decoupled from cursor) ──
+    GESTURE_FREQ = 30             # Hz for gesture path
+    GESTURE_BETA = 0.05           # more aggressive for discrete gestures
+    GESTURE_DCUTOFF = 1.0
+
+    # ── Landmark EMA smoothing ── (legacy, now mostly handled by One-Euro)
+    LMARK_ALPHA  = 0.55           # kept for gesture landmarks (non-cursor)
+
+    # ── Temporal gesture stabilisation ──
+    GEST_WIN     = 4              # reduced from 6 for faster confirmation
+    GEST_THRESH  = 0.75           # increased from 0.60 for precision
 
     # Mouse
-    SMOOTH       = 0.28           # EMA alpha for cursor position
+    SMOOTH       = 0.28           # legacy, kept for compatibility
     PINCH_THRESH = 0.042
     DRAG_THRESH  = 0.032
     SCROLL_SENS  = 18
     CLICK_CD     = 0.30
     SHORTCUT_CD  = 0.70
-    DWELL_MS     = 20             # reduced for lower latency
-
-    # ── Landmark EMA smoothing ── (optimized for velocity)
-    LMARK_ALPHA  = 0.55           # increased from 0.40 for faster responsiveness
-
-    # ── Temporal gesture stabilisation ── (optimized for low-latency)
-    GEST_WIN     = 4              # reduced from 6 for faster confirmation
-    GEST_THRESH  = 0.75           # increased from 0.60 for precision
-
-    # ── Swipe detection ──
-    SWIPE_VEL    = 0.65           # normalised units/second threshold
-
-    # ── Two-hand pinch zoom ──
-    ZOOM_DEAD    = 0.018          # dead-zone for wrist-distance delta
-    ZOOM_CD      = 0.12           # seconds between zoom steps
+    DWELL_MS     = 16             # reduced for 60fps (16ms ≈ 60fps)
 
     SCR_W, SCR_H = pyautogui.size()
     MARGIN_X     = 0.12
@@ -87,6 +92,46 @@ class Cfg:
     TEXT_DIM = "#8b949e"
     BLUE     = "#58a6ff"
     PURPLE   = "#bc8cff"
+
+
+# ─────────────────────────────────────────────────────────────
+#  ONE-EURO FILTER  — low-latency, adaptive smoothing for cursor
+# ─────────────────────────────────────────────────────────────
+class OneEuroFilter:
+    def __init__(self, freq: float = 60.0, beta: float = 0.01, dcutoff: float = 1.0):
+        self._freq = freq
+        self._beta = beta
+        self._dcutoff = dcutoff
+        self._t_prev = None
+        self._x_prev = None
+        self._dx_prev = None
+
+    def __call__(self, x: float, t: float) -> float:
+        if self._x_prev is None:
+            self._x_prev = x
+            self._dx_prev = 0.0
+            self._t_prev = t
+            return x
+        dt = max(1e-6, t - self._t_prev)
+        dx = (x - self._x_prev) / dt
+        a_d = self._alpha(dt, self._dcutoff)
+        dx_smooth = a_d * dx + (1 - a_d) * self._dx_prev
+        a = self._alpha(dt, self._beta)
+        x_smooth = a * x + (1 - a) * (self._x_prev + self._dx_prev * dt)
+        self._x_prev = x_smooth
+        self._dx_prev = dx_smooth
+        self._t_prev = t
+        return x_smooth
+
+    @staticmethod
+    def _alpha(dt: float, cutoff: float) -> float:
+        r = 2 * 3.14159 * cutoff * dt
+        return r / (r + 1)
+
+    def reset(self):
+        self._t_prev = None
+        self._x_prev = None
+        self._dx_prev = None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -182,6 +227,7 @@ class HandTracker:
         self._hands = mh.Hands(
             static_image_mode=False,
             max_num_hands=Cfg.MAX_HANDS,
+            model_complexity=Cfg.MODEL_COMPLEX,
             min_detection_confidence=Cfg.DETECT_CONF,
             min_tracking_confidence=Cfg.TRACK_CONF,
         )
@@ -334,6 +380,9 @@ class SmoothMouse:
         self._ts  = 0.0   # last shortcut timestamp
         self._tz  = 0.0   # last zoom timestamp
         self._lk  = threading.Lock()
+        self._t_last = time.time()
+        self._filter_x = OneEuroFilter(Cfg.CURSOR_FREQ, Cfg.CURSOR_BETA, Cfg.CURSOR_DCUTOFF)
+        self._filter_y = OneEuroFilter(Cfg.CURSOR_FREQ, Cfg.CURSOR_BETA, Cfg.CURSOR_DCUTOFF)
 
     def _n2s(self, nx: float, ny: float) -> tuple[int, int]:
         mx, my = Cfg.MARGIN_X, Cfg.MARGIN_Y
@@ -343,10 +392,10 @@ class SmoothMouse:
 
     def move(self, nx: float, ny: float):
         tx, ty = self._n2s(nx, ny)
-        a = Cfg.SMOOTH
+        t = time.time()
         with self._lk:
-            self.cx = int(self.cx + a * (tx - self.cx))
-            self.cy = int(self.cy + a * (ty - self.cy))
+            self.cx = int(self._filter_x(float(tx), t))
+            self.cy = int(self._filter_y(float(ty), t))
             pyautogui.moveTo(self.cx, self.cy)
 
     def _click_ok(self) -> bool:
@@ -900,6 +949,7 @@ class CameraThread(threading.Thread):
         cap = cv2.VideoCapture(Cfg.CAMERA_IDX)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH,  Cfg.CAM_W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, Cfg.CAM_H)
+        cap.set(cv2.CAP_PROP_FPS, Cfg.FPS_TARGET)
 
         tracker   = HandTracker()
         db        = getattr(self.app, "_db", None)
