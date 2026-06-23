@@ -26,17 +26,6 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{}' | jq -r '.tool_input.command // \"\"' | grep -q 'git push' && (grep -q 'PERF_MONITORING.*true' /home/user/hand-gesture-control/hand_gesture_control.py >/dev/null 2>&1 && echo '{\"systemMessage\": \"✓ Performance monitoring enabled\"}' || echo '{\"systemMessage\": \"⚠ Performance monitoring should be enabled\"}') || echo '{}' ",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
+    "PreToolUse": []
   }
 }

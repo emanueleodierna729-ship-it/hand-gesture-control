@@ -47,8 +47,7 @@ class PerformanceMonitor:
 
     def mark_frame(self):
         now = time.perf_counter()
-        if self._frame_times:
-            self._frame_times.append((now - self._last_t) * 1000)
+        self._frame_times.append((now - self._last_t) * 1000)
         self._last_t = now
 
     def mark_gesture(self, elapsed_ms: float):
@@ -143,6 +142,13 @@ class Cfg:
     # ── Temporal gesture stabilisation ──
     GEST_WIN     = 4              # reduced from 6 for faster confirmation
     GEST_THRESH  = 0.75           # increased from 0.60 for precision
+
+    # ── Swipe detection ──
+    SWIPE_VEL    = 0.65           # normalised units/second threshold
+
+    # ── Two-hand pinch zoom ──
+    ZOOM_DEAD    = 0.018          # dead-zone for wrist-distance delta
+    ZOOM_CD      = 0.12           # seconds between zoom steps
 
     # Mouse
     SMOOTH       = 0.28           # legacy, kept for compatibility
@@ -627,7 +633,7 @@ class KalmanSmoothMouse(SmoothMouse):
     def move(self, x: float, y: float, screen_w: int = None, screen_h: int = None):
         x_filt = self._kalman_x.update(x)
         y_filt = self._kalman_y.update(y)
-        super().move(x_filt, y_filt, screen_w, screen_h)
+        super().move(x_filt, y_filt)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1520,8 +1526,6 @@ class CustomGestureRecogniser(GestureRecogniser):
             return None
         candidates.sort(key=lambda x: x[0])
         k_nearest = candidates[: self.K]
-        if k_nearest[0][0] >= (self.CONF_THRESH ** 2):
-            return None
         best_name, _ = Counter(name for _, name in k_nearest).most_common(1)[0]
         return best_name
 
