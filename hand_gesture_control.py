@@ -34,6 +34,79 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────────────────────
+#  PERFORMANCE MONITOR  — real-time latency & resource tracking
+# ─────────────────────────────────────────────────────────────
+class PerformanceMonitor:
+    def __init__(self, window_size: int = 60):
+        self.window_size = window_size
+        self._frame_times = deque(maxlen=window_size)
+        self._gesture_times = deque(maxlen=window_size)
+        self._filter_times = deque(maxlen=window_size)
+        self._last_t = time.perf_counter()
+
+    def mark_frame(self):
+        now = time.perf_counter()
+        if self._frame_times:
+            self._frame_times.append((now - self._last_t) * 1000)
+        self._last_t = now
+
+    def mark_gesture(self, elapsed_ms: float):
+        self._gesture_times.append(elapsed_ms)
+
+    def mark_filter(self, elapsed_ms: float):
+        self._filter_times.append(elapsed_ms)
+
+    @property
+    def avg_frame_latency_ms(self) -> float:
+        return sum(self._frame_times) / len(self._frame_times) if self._frame_times else 0
+
+    @property
+    def avg_gesture_latency_ms(self) -> float:
+        return sum(self._gesture_times) / len(self._gesture_times) if self._gesture_times else 0
+
+    @property
+    def avg_filter_latency_ms(self) -> float:
+        return sum(self._filter_times) / len(self._filter_times) if self._filter_times else 0
+
+    @property
+    def max_frame_latency_ms(self) -> float:
+        return max(self._frame_times) if self._frame_times else 0
+
+    def report(self) -> dict:
+        return {
+            'frame_avg_ms': round(self.avg_frame_latency_ms, 2),
+            'frame_max_ms': round(self.max_frame_latency_ms, 2),
+            'gesture_avg_ms': round(self.avg_gesture_latency_ms, 2),
+            'filter_avg_ms': round(self.avg_filter_latency_ms, 2),
+        }
+
+
+# ─────────────────────────────────────────────────────────────
+#  KALMAN FILTER  — advanced noise reduction for gesture tracking
+# ─────────────────────────────────────────────────────────────
+class KalmanFilter1D:
+    def __init__(self, process_var: float = 1e-5, measurement_var: float = 1e-2):
+        self._q = process_var
+        self._r = measurement_var
+        self._x = None
+        self._p = 1.0
+
+    def update(self, z: float) -> float:
+        if self._x is None:
+            self._x = z
+            return z
+        self._p = self._p + self._q
+        k = self._p / (self._p + self._r)
+        self._x = self._x + k * (z - self._x)
+        self._p = (1 - k) * self._p
+        return self._x
+
+    def reset(self):
+        self._x = None
+        self._p = 1.0
+
+
+# ─────────────────────────────────────────────────────────────
 #  CONFIGURATION
 # ─────────────────────────────────────────────────────────────
 class Cfg:
@@ -542,6 +615,21 @@ class SmoothMouse:
 
 
 # ─────────────────────────────────────────────────────────────
+#  KALMAN SMOOTH MOUSE — advanced filtering using Kalman filter
+# ─────────────────────────────────────────────────────────────
+class KalmanSmoothMouse(SmoothMouse):
+    def __init__(self):
+        super().__init__()
+        self._kalman_x = KalmanFilter1D(process_var=1e-5, measurement_var=1e-2)
+        self._kalman_y = KalmanFilter1D(process_var=1e-5, measurement_var=1e-2)
+
+    def move(self, x: float, y: float, screen_w: int = None, screen_h: int = None):
+        x_filt = self._kalman_x.update(x)
+        y_filt = self._kalman_y.update(y)
+        super().move(x_filt, y_filt, screen_w, screen_h)
+
+
+# ─────────────────────────────────────────────────────────────
 #  DUAL-HAND PROCESSOR
 #  Dominant hand (wrist.x > 0.5 after flip) = cursor / action
 #  Modifier hand (wrist.x < 0.5)            = mode / shortcut
@@ -987,6 +1075,7 @@ class CameraThread(threading.Thread):
         self.action    = ""
         self.fps       = 0.0
         self.n_hands   = 0
+        self.perf      = PerformanceMonitor(window_size=60)
 
     def start_capture(self):
         self._running = True
@@ -1009,6 +1098,7 @@ class CameraThread(threading.Thread):
         fc = 0
 
         while self._running:
+            t_frame_start = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
                 time.sleep(0.01)
@@ -1017,6 +1107,7 @@ class CameraThread(threading.Thread):
             frame = cv2.flip(frame, 1)
 
             if self.app.hand_active:
+                t_gesture_start = time.perf_counter()
                 results = tracker.process(frame)
                 frame   = tracker.annotate(frame, results)
                 hands   = tracker.extract(results)
@@ -1025,6 +1116,8 @@ class CameraThread(threading.Thread):
                 self.dom_g  = dom_g
                 self.mod_g  = mod_g
                 self.action = action
+                gesture_elapsed = (time.perf_counter() - t_gesture_start) * 1000
+                self.perf.mark_gesture(gesture_elapsed)
                 self._draw_hud(frame, dom_g, mod_g, action, hands)
 
                 # Feed recorder if a recording session is active
@@ -1044,8 +1137,16 @@ class CameraThread(threading.Thread):
                 self.fps = fc / elapsed
                 fc, t0 = 0, time.perf_counter()
 
+            frame_elapsed = (time.perf_counter() - t_frame_start) * 1000
+            self.perf.mark_frame()
+
+            h, w = frame.shape[:2]
             cv2.putText(frame, f"FPS {self.fps:.0f}", (8, 26),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 220, 80), 2)
+
+            perf = self.perf.report()
+            cv2.putText(frame, f"Latency: {perf['frame_avg_ms']:.0f}ms", (8, h-20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 150, 255), 1)
 
             with self._flock:
                 self.frame = frame.copy()
