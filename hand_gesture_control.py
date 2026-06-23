@@ -22,6 +22,7 @@ import json
 import webbrowser
 import subprocess
 import platform as _platform
+from urllib.parse import quote
 from collections import deque, Counter
 from PIL import Image, ImageTk
 
@@ -925,7 +926,8 @@ class DualHandProcessor:
                     url = "https://" + url
                 webbrowser.open(url)
             elif action == "search" and args:
-                webbrowser.open(f"https://www.google.it/search?q={str(args).replace(' ', '+')}")
+                q = quote(str(args), safe='')
+                webbrowser.open(f"https://www.google.it/search?q={q}")
             elif action == "zoom" and args is not None:
                 m.zoom(int(args))
             elif action == "screenshot":
@@ -1339,7 +1341,7 @@ class VoiceController:
                 else:
                     subprocess.Popen(["xdg-open", name])
             elif action == 'search':
-                q = str(args).replace(' ', '+')
+                q = quote(str(args), safe='')
                 webbrowser.open(f"https://www.google.it/search?q={q}")
             elif action == 'create_folder':
                 name   = str(args) if args else 'Nuova Cartella'
