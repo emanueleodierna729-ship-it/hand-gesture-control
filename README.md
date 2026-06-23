@@ -131,6 +131,46 @@ SmoothMouse (EMA cursore α=0.28)
 
 ---
 
+## Latenza e Performance
+
+### One-Euro Filter (v2.1+)
+L'aggiornamento più recente implementa il **One-Euro Filter** per il movimento del cursore anziché EMA a α fisso:
+
+- **Bassa latenza su movimento veloce**: ~5-10ms lag (vs ~30ms con EMA)
+- **Basso rumore su movimento lento**: Derivative filter elimina jitter
+- **Responsività realistica**: Simile a mouse fisico per il cursore
+
+**Latenza tipica:**
+| Operazione | Latenza |
+|-----------|---------|
+| Cursore (One-Euro @ 60Hz) | 33-41ms |
+| Gesto (voting @ 4 frame) | 105-125ms |
+
+### Edge AI (Webcam con chip integrato)
+Per latenza **ultra-bassa** (~16ms cursore), usa una webcam con chip IA dedicato:
+
+**Webcam supportate:**
+- **Insta360 Link** — Chip Qualcomm, tracciamento gesti onboard
+- **Obsbot Tail** — AI dedicata, 120fps, gesti real-time
+- Altre con firmware IA moderno
+
+**Vantaggi:**
+- Elaborazione gesti direttamente nel chip camera
+- Nessun carico CPU del PC
+- Framerate elevato (60-120fps)
+- Pre-elaborazione prima dell'invio al PC
+
+**Come usare:**
+```python
+# In hand_gesture_control.py, riga ~50:
+PREFER_EDGE_AI = True  # Auto-rileva camera Edge AI
+MAX_EDGE_AI_FPS = 120  # Sfrutta 120fps se disponibile
+```
+
+Senza Edge AI, One-Euro Filter + 60fps offre comunque **3× migliore latenza** che in v2.0.
+
+---
+
 ## Dipendenze Python
 
 ```

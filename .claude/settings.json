@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_gesture_control.py)",
+      "Bash(python -m pytest *)",
+      "Bash(pytest *)",
+      "Bash(python -m py_compile *)",
+      "Bash(python -c *)"
+    ]
+  },
+  "env": {
+    "PERF_MONITORING": "true",
+    "PREFER_EDGE_AI": "false"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; [[ \"$f\" =~ \\.py$ ]] && [[ ! \"$f\" =~ test_ ]] && python -m pytest test_gesture_control.py -q 2>&1 | tail -5 || true; }",
+            "timeout": 60,
+            "statusMessage": "Running test suite validation..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{}' | jq -r '.tool_input.command // \"\"' | grep -q 'git push' && (grep -q 'PERF_MONITORING.*true' /home/user/hand-gesture-control/hand_gesture_control.py >/dev/null 2>&1 && echo '{\"systemMessage\": \"✓ Performance monitoring enabled\"}' || echo '{\"systemMessage\": \"⚠ Performance monitoring should be enabled\"}') || echo '{}' ",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
