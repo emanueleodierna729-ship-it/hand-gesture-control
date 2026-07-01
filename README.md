@@ -107,6 +107,26 @@ Parla in italiano per comandare il PC:
 
 ---
 
+## Agente Autonomo (opzionale)
+
+Oltre ai singoli comandi vocali, puoi assegnare un **obiettivo multi-step**: un LLM pianifica
+una sequenza di azioni (apertura URL/app, ricerca, scorciatoie, digitazione, screenshot, attesa)
+e l'app le esegue una per una.
+
+```
+"agente <obiettivo>"
+"obiettivo <obiettivo>"
+```
+
+Esempio: *"agente apri youtube e cerca meteo Milano"*.
+
+Richiede il pacchetto `anthropic` (incluso negli script di installazione) e la variabile
+d'ambiente `ANTHROPIC_API_KEY`. Senza chiave configurata, la sezione **Agente** del pannello
+mostra lo stato non disponibile e la funzione resta disattivata — il resto dell'app funziona
+normalmente.
+
+---
+
 ## Architettura
 
 ```

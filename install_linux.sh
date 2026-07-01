@@ -87,6 +87,7 @@ PACKAGES=(
     "Pillow>=10.0.0"
     "pynput>=1.7.6"
     "SpeechRecognition>=3.10.0"
+    "anthropic>=0.40.0"
 )
 for pkg in "${PACKAGES[@]}"; do
     name="${pkg%%>*}"
