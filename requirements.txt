@@ -1,0 +1,8 @@
+opencv-python>=4.8.0
+mediapipe>=0.10.0,<0.10.14
+pyautogui>=0.9.54
+numpy>=1.24.0
+Pillow>=10.0.0
+pynput>=1.7.6
+SpeechRecognition>=3.10.0
+anthropic>=0.40.0

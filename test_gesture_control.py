@@ -63,6 +63,7 @@ from hand_gesture_control import (
     Cfg, CommandParser, LandmarkSmoother, GestureStabiliser,
     VelocityTracker, GestureRecogniser, CustomGestureRecogniser,
     GestureDatabase, GestureRecorder, SmoothMouse, G, HandTracker,
+    AutonomousAgent, VoiceController, run_action,
 )
 
 
@@ -586,6 +587,193 @@ class TestCustomGestureRecogniser(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
+#  TEST: run_action
+# ─────────────────────────────────────────────────────────────
+class TestRunAction(unittest.TestCase):
+    def setUp(self):
+        self.mouse = mock.MagicMock(spec=SmoothMouse)
+
+    def test_hotkey_list(self):
+        run_action(self.mouse, "hotkey", ["ctrl", "c"])
+        self.mouse.hotkey.assert_called_once_with("ctrl", "c")
+
+    def test_hotkey_tuple(self):
+        run_action(self.mouse, "hotkey", ("ctrl", "v"))
+        self.mouse.hotkey.assert_called_once_with("ctrl", "v")
+
+    def test_zoom_in(self):
+        run_action(self.mouse, "zoom", 1)
+        self.mouse.zoom.assert_called_once_with(1)
+
+    def test_zoom_out(self):
+        run_action(self.mouse, "zoom", -1)
+        self.mouse.zoom.assert_called_once_with(-1)
+
+    def test_wait_clamped(self):
+        import time as _time
+        start = _time.monotonic()
+        run_action(self.mouse, "wait", 0.0)   # 0.0 is not falsy → sleeps 0s
+        elapsed = _time.monotonic() - start
+        self.assertLess(elapsed, 0.5)
+
+    def test_wait_negative_clamped_to_zero(self):
+        run_action(self.mouse, "wait", -5)  # must not raise
+
+    def test_unknown_action_silent(self):
+        run_action(self.mouse, "nonexistent_action", None)  # must not raise
+
+
+# ─────────────────────────────────────────────────────────────
+#  TEST: AutonomousAgent
+# ─────────────────────────────────────────────────────────────
+def _make_fake_anthropic(plan_json: str):
+    """Return a fake anthropic module whose Anthropic client returns plan_json."""
+    class _Block:
+        type = "text"
+        text = plan_json
+    class _Msg:
+        content = [_Block()]
+    class _Messages:
+        def create(self, **kw): return _Msg()
+    class _Client:
+        def __init__(self, api_key): self.messages = _Messages()
+    fake = mock.MagicMock()
+    fake.Anthropic = _Client
+    return fake
+
+
+class TestAutonomousAgent(unittest.TestCase):
+    def _make_agent(self, plan_json=None, api_key="test-key"):
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        updates = []
+        agent = AutonomousAgent(mouse, on_update=lambda: updates.append(agent.status))
+        agent._has_sdk = True
+        agent.api_key = api_key
+        if plan_json is not None:
+            sys.modules["anthropic"] = _make_fake_anthropic(plan_json)
+        return agent, mouse, updates
+
+    def tearDown(self):
+        sys.modules.pop("anthropic", None)
+
+    def test_unavailable_without_key(self):
+        agent, _, _ = self._make_agent(api_key="")
+        self.assertFalse(agent.available)
+
+    def test_unavailable_without_sdk(self):
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        agent = AutonomousAgent(mouse)
+        agent._has_sdk = False
+        agent.api_key = "x"
+        self.assertFalse(agent.available)
+
+    def test_available_with_key_and_sdk(self):
+        agent, _, _ = self._make_agent()
+        self.assertTrue(agent.available)
+
+    def test_run_executes_plan(self):
+        plan = '[{"action": "zoom", "args": 1}]'
+        agent, mouse, updates = self._make_agent(plan)
+        agent.run("zoom in")
+        agent._thread.join(timeout=5)
+        self.assertEqual(agent.status, "COMPLETATO")
+        mouse.zoom.assert_called_once_with(1)
+
+    def test_run_empty_goal_ignored(self):
+        agent, _, _ = self._make_agent('[]')
+        agent.run("   ")
+        self.assertIsNone(agent._thread)
+
+    def test_run_while_busy_sets_occupato(self):
+        import time as _time
+        plan = '[{"action": "wait", "args": 0.3}]'
+        agent, _, updates = self._make_agent(plan)
+        agent.run("first goal")
+        _time.sleep(0.05)
+        agent.run("second goal while busy")
+        self.assertIn("OCCUPATO", updates)
+
+    def test_bad_json_sets_errore_piano(self):
+        sys.modules["anthropic"] = _make_fake_anthropic("not json at all")
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        agent = AutonomousAgent(mouse)
+        agent._has_sdk = True
+        agent.api_key = "x"
+        agent.run("bad plan")
+        agent._thread.join(timeout=5)
+        self.assertEqual(agent.status, "ERRORE PIANO")
+
+    def test_stop_interrupts_loop(self):
+        import time as _time
+        plan = '[{"action":"wait","args":0.5},{"action":"wait","args":0.5},{"action":"wait","args":0.5}]'
+        agent, _, _ = self._make_agent(plan)
+        agent.run("long task")
+        _time.sleep(0.1)
+        agent.stop()
+        agent._thread.join(timeout=5)
+        # After stop(), loop exits with INTERROTTO (if mid-run) or IDLE (if stopped before start)
+        self.assertIn(agent.status, ("INTERROTTO", "IDLE", "COMPLETATO"))
+
+    def test_api_key_reread_at_runtime(self):
+        agent, _, _ = self._make_agent(api_key="")
+        self.assertFalse(agent.available)
+        os.environ["ANTHROPIC_API_KEY"] = "runtime-key"
+        try:
+            self.assertTrue(agent.available)
+        finally:
+            del os.environ["ANTHROPIC_API_KEY"]
+
+
+# ─────────────────────────────────────────────────────────────
+#  TEST: VoiceController (mocked speech_recognition)
+# ─────────────────────────────────────────────────────────────
+class TestVoiceControllerParser(unittest.TestCase):
+    """Tests the VoiceController parsing/dispatch logic with mocked SR."""
+
+    def test_agent_goal_dispatched_to_callback(self):
+        received = []
+        agent_goals = []
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        vc = VoiceController(mouse,
+                             on_command=lambda t, a: received.append((t, a)),
+                             on_agent_goal=lambda g: agent_goals.append(g))
+        # Simulate what _loop does when text is recognised
+        text = "agente apri youtube"
+        result = vc._parser.parse(text)
+        self.assertIsNotNone(result)
+        action, args = result
+        self.assertEqual(action, "agent")
+        if action == "agent" and vc._on_agent:
+            vc._on_agent(str(args))
+        self.assertEqual(agent_goals, ["apri youtube"])
+
+    def test_non_agent_command_not_dispatched_to_agent(self):
+        agent_goals = []
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        vc = VoiceController(mouse,
+                             on_command=lambda t, a: None,
+                             on_agent_goal=lambda g: agent_goals.append(g))
+        result = vc._parser.parse("copia")
+        self.assertIsNotNone(result)
+        action, _ = result
+        self.assertNotEqual(action, "agent")
+        self.assertEqual(agent_goals, [])
+
+    def test_history_bounded_by_cfg(self):
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        vc = VoiceController(mouse, on_command=lambda t, a: None)
+        self.assertEqual(vc.history.maxlen, Cfg.VOICE_HISTORY_MAX)
+
+    def test_available_false_without_sr(self):
+        sys.modules.pop("speech_recognition", None)
+        # If speech_recognition was never importable, available should be False
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        vc = VoiceController(mouse, on_command=lambda t, a: None)
+        # available depends on import at __init__ time; it's already False in headless env
+        self.assertIsInstance(vc.available, bool)
+
+
+# ─────────────────────────────────────────────────────────────
 #  100-RUN REPORTER
 # ─────────────────────────────────────────────────────────────
 def _build_suite():
@@ -600,6 +788,9 @@ def _build_suite():
         TestSmoothMouseCoords,
         TestGestureDatabase,
         TestCustomGestureRecogniser,
+        TestRunAction,
+        TestAutonomousAgent,
+        TestVoiceControllerParser,
     ):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     return suite

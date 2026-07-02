@@ -6,6 +6,7 @@ Dual-hand support · Landmark EMA smoothing · Temporal gesture stabilisation
 
 from __future__ import annotations
 
+import logging
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -32,6 +33,13 @@ try:
     PYNPUT_OK = True
 except ImportError:
     PYNPUT_OK = False
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s  %(levelname)-7s  %(name)s — %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("hgc")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -334,8 +342,8 @@ class EdgeAIDetector:
             if props.get("width", 0) >= 2560:
                 self.available = True
                 self.mode = "EdgeAI"
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("EdgeAI detection failed: %s", e)
 
     def supports_60fps(self) -> bool:
         """Check if camera supports 60fps."""
@@ -345,7 +353,8 @@ class EdgeAIDetector:
             actual_fps = cap.get(cv2.CAP_PROP_FPS)
             cap.release()
             return actual_fps >= 50
-        except Exception:
+        except Exception as e:
+            log.debug("60fps check failed: %s", e)
             return False
 
 
@@ -580,8 +589,8 @@ class SmoothMouse:
         else:
             try:
                 pyautogui.hscroll(int(dx * 3))
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("hscroll failed: %s", e)
 
     def zoom(self, direction: int) -> bool:
         """Ctrl+scroll zoom. direction +1 = in, -1 = out."""
@@ -593,7 +602,8 @@ class SmoothMouse:
             pyautogui.keyDown("ctrl")
             self._mc.scroll(0, direction) if PYNPUT_OK else pyautogui.scroll(direction * 3)
             pyautogui.keyUp("ctrl")
-        except Exception:
+        except Exception as e:
+            log.warning("zoom failed: %s", e)
             try:
                 pyautogui.keyUp("ctrl")
             except Exception:
@@ -607,15 +617,15 @@ class SmoothMouse:
         self._ts = now
         try:
             pyautogui.hotkey(*keys)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("hotkey %s failed: %s", keys, e)
         return True
 
     def press_key(self, key: str):
         try:
             pyautogui.press(key)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("press_key %r failed: %s", key, e)
 
     def start_drag(self):
         if self.drag:
@@ -955,8 +965,8 @@ class DualHandProcessor:
                 name   = str(args) if args else "Nuova Cartella"
                 target = os.path.join(os.path.expanduser("~"), "Desktop", name)
                 os.makedirs(target, exist_ok=True)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("custom action %r failed: %s", action, e)
 
     # ── helpers ───────────────────────────────────────────────
     def _reset_pinch(self):
@@ -1073,8 +1083,8 @@ class VirtualKeyboard(tk.Toplevel):
                 self._mouse.hotkey(*chain)
             else:
                 self._mouse.press_key(mapped)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("virtual keyboard key %r failed: %s", mapped, e)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1250,9 +1260,9 @@ def run_action(mouse: "SmoothMouse", action: str, args):
             path = os.path.expanduser(f"~/Desktop/screenshot_{ts}.png")
             pyautogui.screenshot(path)
         elif action == 'wait':
-            time.sleep(max(0.0, min(float(args or 1), 10.0)))
-    except Exception:
-        pass
+            time.sleep(max(0.0, min(float(args if args is not None else 1), 10.0)))
+    except Exception as e:
+        log.warning("run_action %r(%r) failed: %s", action, args, e)
 
 
 class CommandParser:
@@ -1348,7 +1358,8 @@ class VoiceController:
         try:
             with sr.Microphone() as mic:
                 rec.adjust_for_ambient_noise(mic, duration=Cfg.VOICE_NOISE_DUR)
-        except Exception:
+        except Exception as e:
+            log.error("Microphone init failed: %s", e)
             self.status   = "MIC ERR"
             self._running = False
             return
@@ -1427,11 +1438,21 @@ class AutonomousAgent:
 
     @property
     def available(self) -> bool:
+        # re-read key at call time so the user can set it after startup
+        self.api_key = os.environ.get("ANTHROPIC_API_KEY", self.api_key)
         return self._has_sdk and bool(self.api_key)
 
     def run(self, goal: str):
         goal = goal.strip()
-        if not self.available or self._running or not goal:
+        if not goal:
+            return
+        if self._running:
+            self.status = "OCCUPATO"
+            self._cb()
+            return
+        if not self.available:
+            self.status = "NON DISPONIBILE"
+            self._cb()
             return
         self.goal        = goal
         self.log         = []
@@ -1541,8 +1562,8 @@ class GestureDatabase:
         try:
             with open(self.DB_FILE, "w", encoding="utf-8") as f:
                 json.dump(self._d, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("GestureDatabase save failed: %s", e)
 
     def _load(self):
         try:
@@ -2221,8 +2242,8 @@ class Dashboard(tk.Tk):
                     self._hands_lbl.configure(
                         text=(f"{'✋' * n}  {n} man{'i' if n != 1 else 'o'}"
                               if n else ""))
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("UI camera update error: %s", e)
 
         try:
             # Voice status polling
@@ -2239,8 +2260,8 @@ class Dashboard(tk.Tk):
             self._voice_dot.configure(fg=col)
             self._voice_status_lbl.configure(text=status, fg=col)
             self._voice_hdr_lbl.configure(text=f"🎤 {status}", fg=col)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("UI voice update error: %s", e)
 
         try:
             # Agent status polling
@@ -2257,8 +2278,8 @@ class Dashboard(tk.Tk):
                 col = Cfg.TEXT_DIM
             self._agent_dot.configure(fg=col)
             self._agent_status_lbl.configure(text=status, fg=col)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("UI agent update error: %s", e)
 
         self.after(Cfg.DWELL_MS, self._loop)
 
@@ -2269,8 +2290,8 @@ class Dashboard(tk.Tk):
         self._voice.stop()
         self._agent.stop()
         self._db.save()
+        self.quit()
         self.destroy()
-        sys.exit(0)
 
 
 # ─────────────────────────────────────────────────────────────
