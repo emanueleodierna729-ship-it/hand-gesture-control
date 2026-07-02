@@ -158,9 +158,19 @@ class Cfg:
     MARGIN_Y     = 0.12
 
     # Voice control
-    VOICE_LANG       = "it-IT"
-    VOICE_TIMEOUT    = 3
-    VOICE_PHRASE_MAX = 6
+    VOICE_LANG         = "it-IT"
+    VOICE_TIMEOUT      = 3
+    VOICE_PHRASE_MAX   = 6
+    VOICE_HISTORY_MAX  = 6    # entries kept in the voice command history ring
+    VOICE_NOISE_DUR    = 0.5  # seconds of ambient noise calibration on start
+    VOICE_UNKNOWN_DELAY = 0.4 # pause (s) after an unrecognised utterance
+    VOICE_ERROR_DELAY  = 1.5  # pause (s) after a recogniser exception
+
+    # Typing
+    TYPE_INTERVAL      = 0.04 # seconds between keystrokes when typing text
+
+    # Camera thread
+    CAM_READ_RETRY_S   = 0.01 # sleep (s) when camera.read() returns no frame
 
     # Autonomous agent (AutoGPT-style plan → execute loop)
     AGENT_MODEL      = "claude-sonnet-5"
@@ -940,7 +950,7 @@ class DualHandProcessor:
                 path = os.path.expanduser(f"~/Desktop/screenshot_{ts}.png")
                 pyautogui.screenshot(path)
             elif action == "type" and args:
-                pyautogui.write(str(args), interval=0.04)
+                pyautogui.write(str(args), interval=Cfg.TYPE_INTERVAL)
             elif action == "create_folder":
                 name   = str(args) if args else "Nuova Cartella"
                 target = os.path.join(os.path.expanduser("~"), "Desktop", name)
@@ -1108,7 +1118,7 @@ class CameraThread(threading.Thread):
             t_frame_start = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
-                time.sleep(0.01)
+                time.sleep(Cfg.CAM_READ_RETRY_S)
                 continue
 
             frame = cv2.flip(frame, 1)
@@ -1234,7 +1244,7 @@ def run_action(mouse: "SmoothMouse", action: str, args):
         elif action == 'zoom':
             mouse.zoom(int(args))
         elif action == 'type':
-            pyautogui.write(str(args), interval=0.04)
+            pyautogui.write(str(args), interval=Cfg.TYPE_INTERVAL)
         elif action == 'screenshot':
             ts   = time.strftime("%Y%m%d_%H%M%S")
             path = os.path.expanduser(f"~/Desktop/screenshot_{ts}.png")
@@ -1312,7 +1322,7 @@ class VoiceController:
         self._thread   = None
         self.status    = "OFFLINE"
         self.last_text = ""
-        self.history   = deque(maxlen=6)
+        self.history   = deque(maxlen=Cfg.VOICE_HISTORY_MAX)
 
         try:
             import speech_recognition  # noqa: F401
@@ -1337,7 +1347,7 @@ class VoiceController:
         rec = sr.Recognizer()
         try:
             with sr.Microphone() as mic:
-                rec.adjust_for_ambient_noise(mic, duration=0.5)
+                rec.adjust_for_ambient_noise(mic, duration=Cfg.VOICE_NOISE_DUR)
         except Exception:
             self.status   = "MIC ERR"
             self._running = False
@@ -1371,11 +1381,11 @@ class VoiceController:
                 self.status = "ASCOLTO"
             except sr.UnknownValueError:
                 self.status = "NON CAPITO"
-                time.sleep(0.4)
+                time.sleep(Cfg.VOICE_UNKNOWN_DELAY)
                 self.status = "ASCOLTO"
             except Exception as e:
                 self.status = f"ERR: {str(e)[:18]}"
-                time.sleep(1.5)
+                time.sleep(Cfg.VOICE_ERROR_DELAY)
                 self.status = "ASCOLTO"
 
     def _execute(self, action: str, args):
