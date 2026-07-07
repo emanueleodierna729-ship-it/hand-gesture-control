@@ -6,6 +6,7 @@ Dual-hand support · Landmark EMA smoothing · Temporal gesture stabilisation
 
 from __future__ import annotations
 
+import logging
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -32,6 +33,13 @@ try:
     PYNPUT_OK = True
 except ImportError:
     PYNPUT_OK = False
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s  %(levelname)-7s  %(name)s — %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("hgc")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -164,9 +172,24 @@ class Cfg:
     MARGIN_Y     = 0.12
 
     # Voice control
-    VOICE_LANG       = "it-IT"
-    VOICE_TIMEOUT    = 3
-    VOICE_PHRASE_MAX = 6
+    VOICE_LANG         = "it-IT"
+    VOICE_TIMEOUT      = 3
+    VOICE_PHRASE_MAX   = 6
+    VOICE_HISTORY_MAX  = 6    # entries kept in the voice command history ring
+    VOICE_NOISE_DUR    = 0.5  # seconds of ambient noise calibration on start
+    VOICE_UNKNOWN_DELAY = 0.4 # pause (s) after an unrecognised utterance
+    VOICE_ERROR_DELAY  = 1.5  # pause (s) after a recogniser exception
+
+    # Typing
+    TYPE_INTERVAL      = 0.04 # seconds between keystrokes when typing text
+
+    # Camera thread
+    CAM_READ_RETRY_S   = 0.01 # sleep (s) when camera.read() returns no frame
+
+    # Autonomous agent (AutoGPT-style plan → execute loop)
+    AGENT_MODEL      = "claude-sonnet-5"
+    AGENT_MAX_STEPS  = 8
+    AGENT_STEP_DELAY = 0.6
 
     # Tkinter palette
     BG_DARK  = "#0d1117"
@@ -325,8 +348,8 @@ class EdgeAIDetector:
             if props.get("width", 0) >= 2560:
                 self.available = True
                 self.mode = "EdgeAI"
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("EdgeAI detection failed: %s", e)
 
     def supports_60fps(self) -> bool:
         """Check if camera supports 60fps."""
@@ -336,7 +359,8 @@ class EdgeAIDetector:
             actual_fps = cap.get(cv2.CAP_PROP_FPS)
             cap.release()
             return actual_fps >= 50
-        except Exception:
+        except Exception as e:
+            log.debug("60fps check failed: %s", e)
             return False
 
 
@@ -571,8 +595,8 @@ class SmoothMouse:
         else:
             try:
                 pyautogui.hscroll(int(dx * 3))
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("hscroll failed: %s", e)
 
     def zoom(self, direction: int) -> bool:
         """Ctrl+scroll zoom. direction +1 = in, -1 = out."""
@@ -584,7 +608,8 @@ class SmoothMouse:
             pyautogui.keyDown("ctrl")
             self._mc.scroll(0, direction) if PYNPUT_OK else pyautogui.scroll(direction * 3)
             pyautogui.keyUp("ctrl")
-        except Exception:
+        except Exception as e:
+            log.warning("zoom failed: %s", e)
             try:
                 pyautogui.keyUp("ctrl")
             except Exception:
@@ -598,15 +623,15 @@ class SmoothMouse:
         self._ts = now
         try:
             pyautogui.hotkey(*keys)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("hotkey %s failed: %s", keys, e)
         return True
 
     def press_key(self, key: str):
         try:
             pyautogui.press(key)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("press_key %r failed: %s", key, e)
 
     def start_drag(self):
         if self.drag:
@@ -941,13 +966,13 @@ class DualHandProcessor:
                 path = os.path.expanduser(f"~/Desktop/screenshot_{ts}.png")
                 pyautogui.screenshot(path)
             elif action == "type" and args:
-                pyautogui.write(str(args), interval=0.04)
+                pyautogui.write(str(args), interval=Cfg.TYPE_INTERVAL)
             elif action == "create_folder":
                 name   = str(args) if args else "Nuova Cartella"
                 target = os.path.join(os.path.expanduser("~"), "Desktop", name)
                 os.makedirs(target, exist_ok=True)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("custom action %r failed: %s", action, e)
 
     # ── helpers ───────────────────────────────────────────────
     def _reset_pinch(self):
@@ -1064,8 +1089,8 @@ class VirtualKeyboard(tk.Toplevel):
                 self._mouse.hotkey(*chain)
             else:
                 self._mouse.press_key(mapped)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("virtual keyboard key %r failed: %s", mapped, e)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1109,7 +1134,7 @@ class CameraThread(threading.Thread):
             t_frame_start = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
-                time.sleep(0.01)
+                time.sleep(Cfg.CAM_READ_RETRY_S)
                 continue
 
             frame = cv2.flip(frame, 1)
@@ -1201,8 +1226,54 @@ class CameraThread(threading.Thread):
 # ─────────────────────────────────────────────────────────────
 #  COMMAND PARSER  — Italian regex-based command recognition
 # ─────────────────────────────────────────────────────────────
+def run_action(mouse: "SmoothMouse", action: str, args):
+    """Execute a single parsed command (open_url, hotkey, type, ...).
+
+    Shared by VoiceController (direct voice commands) and AutonomousAgent
+    (LLM-planned command sequences) so both dispatch through one vocabulary.
+    """
+    try:
+        if action == 'open_url':
+            url = str(args)
+            if not url.startswith('http'):
+                url = 'https://' + url
+            webbrowser.open(url)
+        elif action == 'open_app':
+            name = str(args)
+            sys_ = _platform.system()
+            if sys_ == "Darwin":
+                subprocess.Popen(["open", "-a", name])
+            elif sys_ == "Windows":
+                os.startfile(name)
+            else:
+                subprocess.Popen(["xdg-open", name])
+        elif action == 'search':
+            q = quote(str(args), safe='')
+            webbrowser.open(f"https://www.google.it/search?q={q}")
+        elif action == 'create_folder':
+            name   = str(args) if args else 'Nuova Cartella'
+            target = os.path.join(os.path.expanduser("~"), "Desktop", name)
+            os.makedirs(target, exist_ok=True)
+        elif action == 'hotkey':
+            keys = args if isinstance(args, (list, tuple)) else (args,)
+            mouse.hotkey(*keys)
+        elif action == 'zoom':
+            mouse.zoom(int(args))
+        elif action == 'type':
+            pyautogui.write(str(args), interval=Cfg.TYPE_INTERVAL)
+        elif action == 'screenshot':
+            ts   = time.strftime("%Y%m%d_%H%M%S")
+            path = os.path.expanduser(f"~/Desktop/screenshot_{ts}.png")
+            pyautogui.screenshot(path)
+        elif action == 'wait':
+            time.sleep(max(0.0, min(float(args if args is not None else 1), 10.0)))
+    except Exception as e:
+        log.warning("run_action %r(%r) failed: %s", action, args, e)
+
+
 class CommandParser:
     _CMDS = [
+        (r'(?:agente|obiettivo|modalit[a\xe0]\s+autonoma)\s+(.+)', 'agent', None),
         (r'apri\s+youtube\b',                 'open_url',      'https://www.youtube.com'),
         (r'apri\s+google\b',                  'open_url',      'https://www.google.it'),
         (r'apri\s+gmail\b',                   'open_url',      'https://mail.google.com'),
@@ -1258,15 +1329,16 @@ class CommandParser:
 #  VOICE CONTROLLER  — Italian speech recognition (daemon thread)
 # ─────────────────────────────────────────────────────────────
 class VoiceController:
-    def __init__(self, mouse: SmoothMouse, on_command):
+    def __init__(self, mouse: SmoothMouse, on_command, on_agent_goal=None):
         self._mouse    = mouse
         self._cb       = on_command
+        self._on_agent = on_agent_goal
         self._parser   = CommandParser()
         self._running  = False
         self._thread   = None
         self.status    = "OFFLINE"
         self.last_text = ""
-        self.history   = deque(maxlen=6)
+        self.history   = deque(maxlen=Cfg.VOICE_HISTORY_MAX)
 
         try:
             import speech_recognition  # noqa: F401
@@ -1291,8 +1363,9 @@ class VoiceController:
         rec = sr.Recognizer()
         try:
             with sr.Microphone() as mic:
-                rec.adjust_for_ambient_noise(mic, duration=0.5)
-        except Exception:
+                rec.adjust_for_ambient_noise(mic, duration=Cfg.VOICE_NOISE_DUR)
+        except Exception as e:
+            log.error("Microphone init failed: %s", e)
             self.status   = "MIC ERR"
             self._running = False
             return
@@ -1313,7 +1386,10 @@ class VoiceController:
                 result = self._parser.parse(text)
                 if result:
                     action, args = result
-                    self._execute(action, args)
+                    if action == 'agent' and self._on_agent:
+                        self._on_agent(str(args))
+                    else:
+                        self._execute(action, args)
                     self._cb(text, action)
                 else:
                     self._cb(text, None)
@@ -1322,49 +1398,136 @@ class VoiceController:
                 self.status = "ASCOLTO"
             except sr.UnknownValueError:
                 self.status = "NON CAPITO"
-                time.sleep(0.4)
+                time.sleep(Cfg.VOICE_UNKNOWN_DELAY)
                 self.status = "ASCOLTO"
             except Exception as e:
                 self.status = f"ERR: {str(e)[:18]}"
-                time.sleep(1.5)
+                time.sleep(Cfg.VOICE_ERROR_DELAY)
                 self.status = "ASCOLTO"
 
     def _execute(self, action: str, args):
-        m = self._mouse
+        run_action(self._mouse, action, args)
+
+
+# ─────────────────────────────────────────────────────────────
+#  AUTONOMOUS AGENT  — AutoGPT-style plan → execute loop
+#
+#  Given a natural-language goal, an LLM plans a bounded sequence of
+#  steps drawn from the same action vocabulary as CommandParser/
+#  VoiceController, then the steps run one at a time. Triggered via
+#  voice ("agente ...", "obiettivo ...") or the Agente tab.
+# ─────────────────────────────────────────────────────────────
+class AutonomousAgent:
+    _ACTIONS = (
+        "open_url(url), open_app(name), search(query), "
+        "create_folder(name), hotkey(keys: list of key names), "
+        "zoom(direction: 1 or -1), type(text), screenshot(), "
+        "wait(seconds)"
+    )
+
+    def __init__(self, mouse: SmoothMouse, on_update=None):
+        self._mouse   = mouse
+        self._cb      = on_update or (lambda: None)
+        self._running = False
+        self._thread  = None
+        self.status   = "IDLE"
+        self.goal     = ""
+        self.log: list[dict] = []
+        self.last_error = ""
+
+        self.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         try:
-            if action == 'open_url':
-                url = str(args)
-                if not url.startswith('http'):
-                    url = 'https://' + url
-                webbrowser.open(url)
-            elif action == 'open_app':
-                name = str(args)
-                sys_ = _platform.system()
-                if sys_ == "Darwin":
-                    subprocess.Popen(["open", "-a", name])
-                elif sys_ == "Windows":
-                    os.startfile(name)
-                else:
-                    subprocess.Popen(["xdg-open", name])
-            elif action == 'search':
-                q = quote(str(args), safe='')
-                webbrowser.open(f"https://www.google.it/search?q={q}")
-            elif action == 'create_folder':
-                name   = str(args) if args else 'Nuova Cartella'
-                target = os.path.join(os.path.expanduser("~"), "Desktop", name)
-                os.makedirs(target, exist_ok=True)
-            elif action == 'hotkey':
-                m.hotkey(*args)
-            elif action == 'zoom':
-                m.zoom(int(args))
-            elif action == 'type':
-                pyautogui.write(str(args), interval=0.04)
-            elif action == 'screenshot':
-                ts   = time.strftime("%Y%m%d_%H%M%S")
-                path = os.path.expanduser(f"~/Desktop/screenshot_{ts}.png")
-                pyautogui.screenshot(path)
-        except Exception:
-            pass
+            import anthropic  # noqa: F401
+            self._has_sdk = True
+        except ImportError:
+            self._has_sdk = False
+
+    @property
+    def available(self) -> bool:
+        # re-read key at call time so the user can set it after startup
+        self.api_key = os.environ.get("ANTHROPIC_API_KEY", self.api_key)
+        return self._has_sdk and bool(self.api_key)
+
+    def run(self, goal: str):
+        goal = goal.strip()
+        if not goal:
+            return
+        if self._running:
+            self.status = "OCCUPATO"
+            self._cb()
+            return
+        if not self.available:
+            self.status = "NON DISPONIBILE"
+            self._cb()
+            return
+        self.goal        = goal
+        self.log         = []
+        self.last_error  = ""
+        self._running    = True
+        self._thread     = threading.Thread(target=self._loop, args=(goal,), daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        self.status = "IDLE"
+
+    def _loop(self, goal: str):
+        self.status = "PIANIFICO..."
+        self._cb()
+        plan = self._plan(goal)
+        if not plan:
+            self.status = "ERRORE PIANO"
+            self._running = False
+            self._cb()
+            return
+
+        total = len(plan)
+        for i, step in enumerate(plan):
+            if not self._running:
+                break
+            action, args = step.get("action"), step.get("args")
+            self.status = f"STEP {i + 1}/{total}: {action}"
+            entry = {"action": action, "args": args, "done": False}
+            self.log.append(entry)
+            self._cb()
+            run_action(self._mouse, action, args)
+            entry["done"] = True
+            self._cb()
+            time.sleep(Cfg.AGENT_STEP_DELAY)
+
+        self.status   = "COMPLETATO" if self._running else "INTERROTTO"
+        self._running = False
+        self._cb()
+
+    def _plan(self, goal: str) -> list[dict] | None:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=self.api_key)
+            prompt = (
+                "Sei un agente che controlla un PC eseguendo una sequenza fissa "
+                "di azioni predefinite.\n"
+                f"Azioni disponibili: {self._ACTIONS}.\n"
+                f"Obiettivo dell'utente: {goal}\n\n"
+                f"Rispondi SOLO con un array JSON (max {Cfg.AGENT_MAX_STEPS} elementi) "
+                'di step nella forma {"action": "<nome>", "args": <valore o null>}. '
+                "Nessun testo prima o dopo il JSON."
+            )
+            msg = client.messages.create(
+                model=Cfg.AGENT_MODEL,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "".join(
+                block.text for block in msg.content if getattr(block, "type", "") == "text"
+            ).strip()
+            text = re.sub(r'^```(?:json)?|```$', '', text, flags=re.MULTILINE).strip()
+            plan = json.loads(text)
+            if not isinstance(plan, list):
+                return None
+            return plan[:Cfg.AGENT_MAX_STEPS]
+        except Exception as e:
+            self.last_error = str(e)[:80]
+            return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1405,8 +1568,8 @@ class GestureDatabase:
         try:
             with open(self.DB_FILE, "w", encoding="utf-8") as f:
                 json.dump(self._d, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("GestureDatabase save failed: %s", e)
 
     def _load(self):
         try:
@@ -1543,7 +1706,9 @@ class Dashboard(tk.Tk):
         self._db         = GestureDatabase()
         self._recogniser = CustomGestureRecogniser(self._db)
         self._recorder   = GestureRecorder(self._db, self._recogniser)
-        self._voice      = VoiceController(self.mouse, self._on_voice_cmd)
+        self._agent      = AutonomousAgent(self.mouse, self._on_agent_update)
+        self._voice      = VoiceController(self.mouse, self._on_voice_cmd,
+                                            on_agent_goal=self._agent.run)
 
         self._setup_window()
         self._build_ui()
@@ -1613,6 +1778,9 @@ class Dashboard(tk.Tk):
         tab_voice = tk.Frame(nb, bg=Cfg.BG_DARK)
         nb.add(tab_voice, text=" Voce ")
 
+        tab_agent = tk.Frame(nb, bg=Cfg.BG_DARK)
+        nb.add(tab_agent, text=" Agente ")
+
         tab_guide = tk.Frame(nb, bg=Cfg.BG_MID)
         nb.add(tab_guide, text=" Guida ")
 
@@ -1621,6 +1789,7 @@ class Dashboard(tk.Tk):
 
         self._build_hands_tab(tab_hands)
         self._build_voice_tab(tab_voice)
+        self._build_agent_tab(tab_agent)
         self._build_guide_tab(tab_guide)
         self._build_learn_tab(tab_learn)
 
@@ -1741,6 +1910,66 @@ class Dashboard(tk.Tk):
             tk.Label(c4, text=f"  • {ex}", font=("Segoe UI", 8),
                      bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, anchor="w"
                      ).pack(fill="x", padx=4)
+        tk.Label(c4, text="", bg=Cfg.BG_CARD).pack(pady=3)
+
+    def _build_agent_tab(self, parent):
+        c1 = self._card(parent, "AGENTE AUTONOMO")
+
+        srow = tk.Frame(c1, bg=Cfg.BG_CARD)
+        srow.pack(fill="x", padx=10, pady=(0, 4))
+        tk.Label(srow, text="Status:", font=("Segoe UI", 9),
+                 bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM).pack(side="left")
+        self._agent_dot = tk.Label(srow, text="●", font=("Segoe UI", 9),
+                 bg=Cfg.BG_CARD, fg="#ff4444")
+        self._agent_dot.pack(side="left", padx=4)
+        self._agent_status_lbl = tk.Label(srow, text="IDLE",
+                 font=("Segoe UI", 9, "bold"), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM)
+        self._agent_status_lbl.pack(side="left")
+
+        if not self._agent.available:
+            hint = ("Pacchetto 'anthropic' non trovato.\nEsegui: pip install anthropic"
+                     if not self._agent._has_sdk else
+                     "Imposta la variabile ANTHROPIC_API_KEY\nper abilitare l'agente.")
+            tk.Label(c1, text=hint, font=("Segoe UI", 8), bg=Cfg.BG_CARD,
+                     fg=Cfg.WARNING, justify="center").pack(pady=(0, 8))
+        else:
+            tk.Label(c1,
+                     text="Pianifica ed esegue obiettivi multi-step\ncon un set di azioni predefinite",
+                     font=("Segoe UI", 8), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM,
+                     justify="center").pack(pady=(0, 8))
+
+        c2 = self._card(parent, "OBIETTIVO")
+        self._agent_goal_var = tk.StringVar()
+        entry = tk.Entry(c2, textvariable=self._agent_goal_var,
+                          font=("Segoe UI", 9), bg=Cfg.BG_MID, fg=Cfg.TEXT,
+                          insertbackground=Cfg.TEXT, relief="flat")
+        entry.pack(fill="x", padx=10, pady=(0, 6), ipady=4)
+        entry.bind("<Return>", lambda e: self._start_agent())
+
+        self._agent_run_btn = tk.Button(
+            c2, text="▶  ESEGUI",
+            font=("Segoe UI", 10, "bold"),
+            bg=Cfg.SUCCESS if self._agent.available else Cfg.TEXT_DIM,
+            fg="#000000",
+            relief="flat", bd=0,
+            cursor="hand2" if self._agent.available else "arrow",
+            padx=16, pady=6,
+            command=self._start_agent,
+            state="normal" if self._agent.available else "disabled")
+        self._agent_run_btn.pack(pady=(0, 8), ipadx=8)
+
+        c3 = self._card(parent, "STEP PIANIFICATI")
+        self._agent_log_lbl = tk.Label(
+            c3, text="—", font=("Consolas", 8), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM,
+            justify="left", anchor="w", wraplength=300)
+        self._agent_log_lbl.pack(fill="x", padx=10, pady=(0, 10))
+
+        c4 = self._card(parent, "ESEMPI OBIETTIVI VOCALI")
+        for ex in ("agente apri youtube e cerca meteo Milano",
+                   "obiettivo crea una cartella progetti e apri il browser"):
+            tk.Label(c4, text=f"  • {ex}", font=("Segoe UI", 8),
+                     bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, anchor="w",
+                     wraplength=300, justify="left").pack(fill="x", padx=4, pady=2)
         tk.Label(c4, text="", bg=Cfg.BG_CARD).pack(pady=3)
 
     def _build_guide_tab(self, parent):
@@ -1972,6 +2201,23 @@ class Dashboard(tk.Tk):
         for i, lbl in enumerate(self._voice_log_labels):
             lbl.configure(text=f"  {texts[i]}" if i < len(texts) else "")
 
+    def _start_agent(self):
+        goal = self._agent_goal_var.get().strip()
+        if goal:
+            self._agent.run(goal)
+
+    def _on_agent_update(self):
+        self.after(0, self._update_agent_ui)
+
+    def _update_agent_ui(self):
+        lines = []
+        for step in self._agent.log[-8:]:
+            mark = "✓" if step["done"] else "…"
+            lines.append(f"{mark} {step['action']}({step['args']})")
+        if not lines and self._agent.last_error:
+            lines = [f"✗ {self._agent.last_error}"]
+        self._agent_log_lbl.configure(text="\n".join(lines) if lines else "—")
+
     # ── main loop ─────────────────────────────────────────────
     def _start_camera(self):
         self._cam = CameraThread(self)
@@ -2000,8 +2246,8 @@ class Dashboard(tk.Tk):
                     self._hands_lbl.configure(
                         text=(f"{'✋' * n}  {n} man{'i' if n != 1 else 'o'}"
                               if n else ""))
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("UI camera update error: %s", e)
 
         try:
             # Voice status polling
@@ -2018,8 +2264,26 @@ class Dashboard(tk.Tk):
             self._voice_dot.configure(fg=col)
             self._voice_status_lbl.configure(text=status, fg=col)
             self._voice_hdr_lbl.configure(text=f"🎤 {status}", fg=col)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("UI voice update error: %s", e)
+
+        try:
+            # Agent status polling
+            status = self._agent.status
+            if status.startswith("STEP"):
+                col = Cfg.BLUE
+            elif status == "COMPLETATO":
+                col = Cfg.SUCCESS
+            elif status in ("ERRORE PIANO", "INTERROTTO"):
+                col = Cfg.ACCENT
+            elif status == "PIANIFICO...":
+                col = Cfg.WARNING
+            else:
+                col = Cfg.TEXT_DIM
+            self._agent_dot.configure(fg=col)
+            self._agent_status_lbl.configure(text=status, fg=col)
+        except Exception as e:
+            log.debug("UI agent update error: %s", e)
 
         self.after(Cfg.DWELL_MS, self._loop)
 
@@ -2028,9 +2292,10 @@ class Dashboard(tk.Tk):
             self._cam.stop_capture()
             self._cam.join(timeout=2.0)
         self._voice.stop()
+        self._agent.stop()
         self._db.save()
+        self.quit()
         self.destroy()
-        sys.exit(0)
 
 
 # ─────────────────────────────────────────────────────────────
