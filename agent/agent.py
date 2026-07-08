@@ -5,76 +5,56 @@ from typing import Iterator
 
 import anthropic
 
+from .memory import AgentMemory
 from .tasks import Task, TaskQueue, TaskStatus
 from .tools import AgentTools
+
+_MODEL = "claude-opus-4-8"
+_MAX_TOKENS = 4096
+_MAX_ITERATIONS = 12
 
 _SYSTEM = """\
 You are GestureAgent, an AI assistant embedded in a hand-gesture control system.
 You help the user accomplish goals on their computer by planning subtasks and calling tools.
-Available tools: open_url, type_text, press_key, run_command, get_screen_size, system_info.
-When given a goal, think step-by-step and call tools as needed. Summarise your result concisely.
+
+Capabilities (use them freely):
+- Browser: open_url
+- Keyboard: type_text, press_key
+- Clipboard: read_clipboard, write_clipboard
+- Screen/Mouse: get_screen_size, take_screenshot, get_mouse_position, move_mouse, click
+- Shell: run_command
+- Files: find_files, read_file, write_file
+- System: system_info, list_processes, get_active_window
+
+Strategy (inspired by gpt-researcher):
+1. Break the goal into concrete subtasks.
+2. Execute subtasks with the appropriate tools.
+3. If research is needed, use run_command with curl/wget or open_url + read_clipboard.
+4. Summarise your result concisely when done.
+
+Past memory (if provided) helps you avoid repeating previous work.
 """
-
-_TOOL_SCHEMAS = [
-    {
-        "name": "open_url",
-        "description": "Open a URL in the default browser.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"url": {"type": "string", "description": "URL to open"}},
-            "required": ["url"],
-        },
-    },
-    {
-        "name": "type_text",
-        "description": "Type text using the keyboard.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"text": {"type": "string", "description": "Text to type"}},
-            "required": ["text"],
-        },
-    },
-    {
-        "name": "press_key",
-        "description": "Press a key or keyboard shortcut (e.g. 'ctrl+c', 'enter').",
-        "input_schema": {
-            "type": "object",
-            "properties": {"key": {"type": "string", "description": "Key or combo to press"}},
-            "required": ["key"],
-        },
-    },
-    {
-        "name": "run_command",
-        "description": "Run a shell command and return its output (10 s timeout).",
-        "input_schema": {
-            "type": "object",
-            "properties": {"cmd": {"type": "string", "description": "Shell command to execute"}},
-            "required": ["cmd"],
-        },
-    },
-    {
-        "name": "get_screen_size",
-        "description": "Return the current screen resolution.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "system_info",
-        "description": "Return OS and machine information.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-]
-
-_MODEL = "claude-opus-4-8"
-_MAX_TOKENS = 4096
-_MAX_ITERATIONS = 10
 
 
 class GestureAgent:
-    """AgentGPT-style agentic loop backed by Claude."""
+    """AgentGPT-style agentic loop backed by Claude.
 
-    def __init__(self, api_key: str | None = None) -> None:
-        self._client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+    Enhancements over the baseline:
+    - 17 tools (SuperAGI-inspired: clipboard, screenshot, mouse, files, processes)
+    - Persistent JSON memory (gpt-researcher-inspired)
+    - Memory-aware system prompt so the agent learns from past tasks
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        memory_path: str | None = None,
+    ) -> None:
+        self._client = anthropic.Anthropic(
+            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY")
+        )
         self.queue = TaskQueue()
+        self.memory = AgentMemory(memory_path) if memory_path else AgentMemory()
 
     # ------------------------------------------------------------------
     # Public API
@@ -88,9 +68,11 @@ class GestureAgent:
             result = self._agent_loop(task, stream_cb=stream_cb)
             task.result = result
             task.status = TaskStatus.COMPLETED
+            self.memory.save(goal, result, task.subtasks)
         except Exception as exc:
             task.result = f"Error: {exc}"
             task.status = TaskStatus.FAILED
+            self.memory.save(goal, task.result, task.subtasks)
         return task
 
     def stream(self, goal: str) -> Iterator[str]:
@@ -101,10 +83,9 @@ class GestureAgent:
             chunks.append(chunk)
 
         import threading
-        task_holder: list[Task] = []
 
         def _worker() -> None:
-            task_holder.append(self.run(goal, stream_cb=_cb))
+            self.run(goal, stream_cb=_cb)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
@@ -119,25 +100,38 @@ class GestureAgent:
     # Internal
     # ------------------------------------------------------------------
 
+    def _build_system_prompt(self, goal: str) -> str:
+        recalled = self.memory.recall(goal, top_k=3)
+        if not recalled:
+            return _SYSTEM
+        mem_lines = "\n".join(
+            f"  • [{e.goal[:60]}] → {e.result[:100]}" for e in recalled
+        )
+        return _SYSTEM + f"\n\nRelevant past tasks:\n{mem_lines}\n"
+
     def _agent_loop(self, task: Task, *, stream_cb: "((str) -> None) | None" = None) -> str:
+        system = self._build_system_prompt(task.goal)
         messages: list[dict] = [{"role": "user", "content": task.goal}]
+        tool_schemas = AgentTools.schemas()
 
         def _emit(text: str) -> None:
             if stream_cb:
                 stream_cb(text)
 
+        assistant_content: list[dict] = []
+
         for _ in range(_MAX_ITERATIONS):
             response = self._client.messages.create(
                 model=_MODEL,
                 max_tokens=_MAX_TOKENS,
-                system=_SYSTEM,
-                tools=_TOOL_SCHEMAS,
+                system=system,
+                tools=tool_schemas,
                 thinking={"type": "adaptive"},
                 messages=messages,
             )
 
             tool_calls_made = False
-            assistant_content: list[dict] = []
+            assistant_content = []
             tool_results: list[dict] = []
 
             for block in response.content:
@@ -150,7 +144,7 @@ class GestureAgent:
                     tool_calls_made = True
                     tool_name = block.name
                     tool_input = block.input or {}
-                    task.subtasks.append(f"Tool: {tool_name}({tool_input})")
+                    task.subtasks.append(f"{tool_name}({tool_input})")
                     _emit(f"\n[{tool_name}] ")
                     result = AgentTools.call(tool_name, **tool_input)
                     _emit(result + "\n")
@@ -174,7 +168,5 @@ class GestureAgent:
             if tool_results:
                 messages.append({"role": "user", "content": tool_results})
 
-        final_texts = [
-            b["text"] for b in assistant_content if b.get("type") == "text"
-        ]
+        final_texts = [b["text"] for b in assistant_content if b.get("type") == "text"]
         return " ".join(final_texts).strip() or "Done."
