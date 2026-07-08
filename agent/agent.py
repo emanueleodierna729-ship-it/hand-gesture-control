@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from typing import Iterator
+import threading
+import time
+from typing import Callable, Iterator
 
 import anthropic
 
@@ -26,7 +28,7 @@ Capabilities (use them freely):
 - Files: find_files, read_file, write_file
 - System: system_info, list_processes, get_active_window
 
-Strategy (inspired by gpt-researcher):
+Strategy:
 1. Break the goal into concrete subtasks.
 2. Execute subtasks with the appropriate tools.
 3. If research is needed, use run_command with curl/wget or open_url + read_clipboard.
@@ -39,10 +41,10 @@ Past memory (if provided) helps you avoid repeating previous work.
 class GestureAgent:
     """AgentGPT-style agentic loop backed by Claude.
 
-    Enhancements over the baseline:
-    - 17 tools (SuperAGI-inspired: clipboard, screenshot, mouse, files, processes)
-    - Persistent JSON memory (gpt-researcher-inspired)
-    - Memory-aware system prompt so the agent learns from past tasks
+    Features:
+    - 17 host-machine tools (browser, keyboard, clipboard, mouse, files, system)
+    - Persistent JSON memory: recalled automatically per goal
+    - Streaming via callback or iterator
     """
 
     def __init__(
@@ -60,41 +62,52 @@ class GestureAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self, goal: str, *, stream_cb: "((str) -> None) | None" = None) -> Task:
-        """Execute *goal* and return the completed Task."""
+    def run(
+        self,
+        goal: str,
+        *,
+        stream_cb: Callable[[str], None] | None = None,
+    ) -> Task:
+        """Execute *goal* synchronously and return the completed Task."""
         task = self.queue.add(goal)
         task.status = TaskStatus.RUNNING
         try:
             result = self._agent_loop(task, stream_cb=stream_cb)
             task.result = result
             task.status = TaskStatus.COMPLETED
-            self.memory.save(goal, result, task.subtasks)
         except Exception as exc:
             task.result = f"Error: {exc}"
             task.status = TaskStatus.FAILED
-            self.memory.save(goal, task.result, task.subtasks)
+        finally:
+            self.memory.save(task.goal, task.result, task.subtasks)
         return task
 
     def stream(self, goal: str) -> Iterator[str]:
-        """Yield text chunks as the agent works toward *goal*."""
+        """Yield text chunks produced while the agent works toward *goal*.
+
+        Runs the agent in a background thread to avoid blocking the caller.
+        """
         chunks: list[str] = []
+        lock = threading.Lock()
 
         def _cb(chunk: str) -> None:
-            chunks.append(chunk)
+            with lock:
+                chunks.append(chunk)
 
-        import threading
-
-        def _worker() -> None:
-            self.run(goal, stream_cb=_cb)
-
-        thread = threading.Thread(target=_worker, daemon=True)
-        thread.start()
+        worker = threading.Thread(
+            target=self.run, args=(goal,), kwargs={"stream_cb": _cb}, daemon=True
+        )
+        worker.start()
 
         sent = 0
-        while thread.is_alive() or sent < len(chunks):
-            while sent < len(chunks):
-                yield chunks[sent]
+        while worker.is_alive() or sent < len(chunks):
+            with lock:
+                new_chunks = chunks[sent:]
+            for chunk in new_chunks:
+                yield chunk
                 sent += 1
+            if worker.is_alive() and sent == len(chunks):
+                time.sleep(0.05)  # yield control; avoid busy-wait
 
     # ------------------------------------------------------------------
     # Internal
@@ -109,7 +122,12 @@ class GestureAgent:
         )
         return _SYSTEM + f"\n\nRelevant past tasks:\n{mem_lines}\n"
 
-    def _agent_loop(self, task: Task, *, stream_cb: "((str) -> None) | None" = None) -> str:
+    def _agent_loop(
+        self,
+        task: Task,
+        *,
+        stream_cb: Callable[[str], None] | None = None,
+    ) -> str:
         system = self._build_system_prompt(task.goal)
         messages: list[dict] = [{"role": "user", "content": task.goal}]
         tool_schemas = AgentTools.schemas()
@@ -139,7 +157,9 @@ class GestureAgent:
                     _emit(block.text)
                     assistant_content.append({"type": "text", "text": block.text})
                 elif block.type == "thinking":
-                    assistant_content.append({"type": "thinking", "thinking": block.thinking})
+                    assistant_content.append(
+                        {"type": "thinking", "thinking": block.thinking}
+                    )
                 elif block.type == "tool_use":
                     tool_calls_made = True
                     tool_name = block.name
@@ -148,17 +168,21 @@ class GestureAgent:
                     _emit(f"\n[{tool_name}] ")
                     result = AgentTools.call(tool_name, **tool_input)
                     _emit(result + "\n")
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": tool_name,
-                        "input": tool_input,
-                    })
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": tool_name,
+                            "input": tool_input,
+                        }
+                    )
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        }
+                    )
 
             messages.append({"role": "assistant", "content": assistant_content})
 

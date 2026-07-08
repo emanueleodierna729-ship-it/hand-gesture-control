@@ -70,8 +70,16 @@ class AgentMemory:
         if not self._path.exists():
             return
         try:
-            raw: list[dict[str, Any]] = json.loads(self._path.read_text())
-            self._entries = [MemoryEntry(**r) for r in raw]
+            raw = json.loads(self._path.read_text())
+            if not isinstance(raw, list):
+                self._entries = []
+                return
+            self._entries = [
+                MemoryEntry(**r) for r in raw
+                if isinstance(r, dict) and all(
+                    k in r for k in ("goal", "result", "subtasks", "timestamp")
+                )
+            ]
         except Exception:
             self._entries = []
 
