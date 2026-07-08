@@ -476,7 +476,7 @@ class TestGestureDatabase(unittest.TestCase):
             suffix=".json", delete=False)
         self.tmp.close()
         self.db = GestureDatabase()
-        self.db.DB_FILE = self.tmp.name  # pylint: disable=invalid-name
+        setattr(self.db, "DB_FILE", self.tmp.name)
         self.db._d = {}
 
     def tearDown(self):
@@ -512,13 +512,13 @@ class TestGestureDatabase(unittest.TestCase):
         self.db.set_action("persist", "screenshot")
         self.db.save()
         db2 = GestureDatabase()
-        db2.DB_FILE = self.tmp.name
+        setattr(db2, "DB_FILE", self.tmp.name)
         db2._load()
         self.assertEqual(db2.sample_count("persist"), 1)
         self.assertEqual(db2.get_entry("persist")["action"], "screenshot")
 
     def test_load_missing_file(self):
-        self.db.DB_FILE = "/tmp/nonexistent_xyz123.json"
+        setattr(self.db, "DB_FILE", "/tmp/nonexistent_xyz123.json")
         self.db._load()   # should not raise
         self.assertEqual(self.db._d, {})
 

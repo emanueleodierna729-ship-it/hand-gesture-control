@@ -251,7 +251,8 @@ Categories=Utility;
 
     elif system == "Windows":
         try:
-            import winreg  # noqa: F401  # pylint: disable=unused-import  (sonda: solo Windows)
+            # Sonda: winreg esiste solo su Windows
+            import winreg  # noqa: F401  # pylint: disable=unused-import
             bat = os.path.join(os.path.dirname(app_path), "avvia.bat")
             with open(bat, "w", encoding="utf-8") as f:
                 f.write(f'@echo off\n"{sys.executable}" "{app_path}"\n')
