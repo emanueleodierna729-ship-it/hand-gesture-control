@@ -10,16 +10,15 @@ Usage:
 import sys
 import io
 import os
-import math
 import json
 import time
 import tempfile
 import unittest
+import unittest.mock as mock
 import datetime
 import argparse
 
 # ── headless guard: stub out hardware imports before loading app ──────────────
-import unittest.mock as mock
 
 # Stub pyautogui so it never moves the real mouse
 sys.modules.setdefault("pyautogui", mock.MagicMock())
@@ -62,7 +61,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hand_gesture_control import (
     Cfg, CommandParser, LandmarkSmoother, GestureStabiliser,
     VelocityTracker, GestureRecogniser, CustomGestureRecogniser,
-    GestureDatabase, GestureRecorder, SmoothMouse, G, HandTracker,
+    GestureDatabase, SmoothMouse, G, HandTracker,
     AutonomousAgent, VoiceController, run_action,
 )
 
@@ -473,7 +472,8 @@ class TestSmoothMouseCoords(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────
 class TestGestureDatabase(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        self.tmp = tempfile.NamedTemporaryFile(  # pylint: disable=consider-using-with
+            suffix=".json", delete=False)
         self.tmp.close()
         self.db = GestureDatabase()
         self.db.DB_FILE = self.tmp.name
@@ -523,7 +523,7 @@ class TestGestureDatabase(unittest.TestCase):
         self.assertEqual(self.db._d, {})
 
     def test_load_corrupt_json(self):
-        with open(self.tmp.name, "w") as f:
+        with open(self.tmp.name, "w", encoding="utf-8") as f:
             f.write("not valid json {{{{")
         self.db._load()   # should not raise
         self.assertEqual(self.db._d, {})
@@ -545,14 +545,14 @@ class TestCustomGestureRecogniser(unittest.TestCase):
 
     def test_exact_match_returns_name(self):
         lm = _flat_hand()
-        db, rec = self._make_db_with_gesture("myopen", lm)
+        _, rec = self._make_db_with_gesture("myopen", lm)
         result = rec._knn(rec.feature_vector(lm))
         self.assertEqual(result, "myopen")
 
     def test_no_match_returns_none(self):
         lm_train = _flat_hand()
         lm_test  = _fist_hand()
-        db, rec  = self._make_db_with_gesture("myopen", lm_train)
+        _, rec   = self._make_db_with_gesture("myopen", lm_train)
         result   = rec._knn(rec.feature_vector(lm_test))
         # fist is very different from open palm → should NOT match
         self.assertNotEqual(result, "myopen")
@@ -580,7 +580,7 @@ class TestCustomGestureRecogniser(unittest.TestCase):
 
     def test_custom_overrides_rules(self):
         lm       = _fist_hand()   # normally → FIST
-        db, rec  = self._make_db_with_gesture("custom_fist", lm)
+        _, rec   = self._make_db_with_gesture("custom_fist", lm)
         result   = rec.classify(lm)
         # custom_fist should win over built-in FIST
         self.assertEqual(result, "custom_fist")
@@ -647,7 +647,7 @@ class TestAutonomousAgent(unittest.TestCase):
         mouse = mock.MagicMock(spec=SmoothMouse)
         updates = []
         agent = AutonomousAgent(mouse, on_update=lambda: updates.append(agent.status))
-        agent._has_sdk = True
+        agent.has_sdk = True
         agent.api_key = api_key
         if plan_json is not None:
             sys.modules["anthropic"] = _make_fake_anthropic(plan_json)
@@ -663,7 +663,7 @@ class TestAutonomousAgent(unittest.TestCase):
     def test_unavailable_without_sdk(self):
         mouse = mock.MagicMock(spec=SmoothMouse)
         agent = AutonomousAgent(mouse)
-        agent._has_sdk = False
+        agent.has_sdk = False
         agent.api_key = "x"
         self.assertFalse(agent.available)
 
@@ -697,7 +697,7 @@ class TestAutonomousAgent(unittest.TestCase):
         sys.modules["anthropic"] = _make_fake_anthropic("not json at all")
         mouse = mock.MagicMock(spec=SmoothMouse)
         agent = AutonomousAgent(mouse)
-        agent._has_sdk = True
+        agent.has_sdk = True
         agent.api_key = "x"
         agent.run("bad plan")
         agent._thread.join(timeout=5)
@@ -870,7 +870,7 @@ def _write_report(report: dict):
 # ─────────────────────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+def _main():
     parser = argparse.ArgumentParser(description="Hand Gesture Control Test Suite")
     parser.add_argument("--x100", action="store_true",
                         help="Esegui 100 run con report su file")
@@ -878,17 +878,21 @@ if __name__ == "__main__":
 
     if args.x100:
         print("Eseguo 100 run della suite di test...")
-        report  = run_100_times()
-        jp, tp  = _write_report(report)
-        pr      = report["pass_rate_pct"]
-        total_p = report["total_passed"]
-        total_r = report["total_run"]
+        results = run_100_times()
+        jp, tp  = _write_report(results)
+        pr      = results["pass_rate_pct"]
+        total_p = results["total_passed"]
+        total_r = results["total_run"]
         status  = "✓ PASS" if pr == 100.0 else "✗ ATTENZIONE"
         print(f"\n{status}  {total_p}/{total_r} passed  ({pr}%)  "
-              f"in {report['elapsed_sec']}s")
+              f"in {results['elapsed_sec']}s")
         print(f"  JSON: {jp}")
         print(f"  TXT:  {tp}")
         sys.exit(0 if pr == 100.0 else 1)
     else:
         # Standard unittest run
         unittest.main(argv=[sys.argv[0]] + remaining, verbosity=2)
+
+
+if __name__ == "__main__":
+    _main()

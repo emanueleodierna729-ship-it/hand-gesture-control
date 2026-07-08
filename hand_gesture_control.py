@@ -6,30 +6,28 @@ Dual-hand support · Landmark EMA smoothing · Temporal gesture stabilisation
 
 from __future__ import annotations
 
+import json
 import logging
-import cv2
-import mediapipe as mp
-import numpy as np
-import pyautogui
-import tkinter as tk
-from tkinter import ttk
+import math
+import os
+import platform as _platform
+import re
+import subprocess
 import threading
 import time
-import math
-import sys
-import re
-import os
-import json
+import tkinter as tk
 import webbrowser
-import subprocess
-import platform as _platform
+from collections import Counter, deque
+from tkinter import ttk
 from urllib.parse import quote
-from collections import deque, Counter
+
+import cv2
+import mediapipe as mp
+import pyautogui
 from PIL import Image, ImageTk
 
 try:
     from pynput.mouse import Button, Controller as _MouseCtrl
-    from pynput.keyboard import Controller as _KeyboardCtrl
     PYNPUT_OK = True
 except ImportError:
     PYNPUT_OK = False
@@ -159,6 +157,9 @@ class Cfg:
     SCROLL_SENS  = 18
     CLICK_CD     = 0.30
     SHORTCUT_CD  = 0.70
+    ZOOM_CD      = 0.40           # cooldown (s) between zoom steps
+    ZOOM_DEAD    = 0.04           # two-hand pinch: wrist-separation deadzone
+    SWIPE_VEL    = 1.2            # open-palm swipe velocity threshold (units/s)
     DWELL_MS     = 16             # reduced for 60fps (16ms ≈ 60fps)
 
     SCR_W, SCR_H = pyautogui.size()
@@ -556,26 +557,34 @@ class SmoothMouse:
     def left_click(self):
         if not self._click_ok():
             return
-        (self._mc.click(Button.left) if PYNPUT_OK
-         else pyautogui.click())
+        if PYNPUT_OK:
+            self._mc.click(Button.left)
+        else:
+            pyautogui.click()
 
     def right_click(self):
         if not self._click_ok():
             return
-        (self._mc.click(Button.right) if PYNPUT_OK
-         else pyautogui.rightClick())
+        if PYNPUT_OK:
+            self._mc.click(Button.right)
+        else:
+            pyautogui.rightClick()
 
     def middle_click(self):
         if not self._click_ok():
             return
-        (self._mc.click(Button.middle) if PYNPUT_OK
-         else pyautogui.middleClick())
+        if PYNPUT_OK:
+            self._mc.click(Button.middle)
+        else:
+            pyautogui.middleClick()
 
     def double_click(self):
         if not self._click_ok():
             return
-        (self._mc.click(Button.left, count=2) if PYNPUT_OK
-         else pyautogui.doubleClick())
+        if PYNPUT_OK:
+            self._mc.click(Button.left, count=2)
+        else:
+            pyautogui.doubleClick()
 
     def scroll(self, dy: float):
         if PYNPUT_OK:
@@ -600,7 +609,10 @@ class SmoothMouse:
         self._tz = now
         try:
             pyautogui.keyDown("ctrl")
-            self._mc.scroll(0, direction) if PYNPUT_OK else pyautogui.scroll(direction * 3)
+            if PYNPUT_OK:
+                self._mc.scroll(0, direction)
+            else:
+                pyautogui.scroll(direction * 3)
             pyautogui.keyUp("ctrl")
         except Exception as e:
             log.warning("zoom failed: %s", e)
@@ -631,13 +643,19 @@ class SmoothMouse:
         if self.drag:
             return
         self.drag = True
-        (self._mc.press(Button.left) if PYNPUT_OK else pyautogui.mouseDown())
+        if PYNPUT_OK:
+            self._mc.press(Button.left)
+        else:
+            pyautogui.mouseDown()
 
     def stop_drag(self):
         if not self.drag:
             return
         self.drag = False
-        (self._mc.release(Button.left) if PYNPUT_OK else pyautogui.mouseUp())
+        if PYNPUT_OK:
+            self._mc.release(Button.left)
+        else:
+            pyautogui.mouseUp()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -649,10 +667,10 @@ class KalmanSmoothMouse(SmoothMouse):
         self._kalman_x = KalmanFilter1D(process_var=1e-5, measurement_var=1e-2)
         self._kalman_y = KalmanFilter1D(process_var=1e-5, measurement_var=1e-2)
 
-    def move(self, x: float, y: float, screen_w: int = None, screen_h: int = None):
-        x_filt = self._kalman_x.update(x)
-        y_filt = self._kalman_y.update(y)
-        super().move(x_filt, y_filt, screen_w, screen_h)
+    def move(self, nx: float, ny: float):
+        x_filt = self._kalman_x.update(nx)
+        y_filt = self._kalman_y.update(ny)
+        super().move(x_filt, y_filt)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -758,8 +776,7 @@ class DualHandProcessor:
                         self._zoom_ref = d
                         return G.ZOOM_OUT
             return G.ZOOM_IN if d > (self._zoom_ref or d) else ""
-        else:
-            self._zoom_ref = None
+        self._zoom_ref = None
         return ""
 
     # ── modifier mode (non-dominant hand) ─────────────────────
@@ -1125,7 +1142,6 @@ class CameraThread(threading.Thread):
         fc = 0
 
         while self._running:
-            t_frame_start = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
                 time.sleep(Cfg.CAM_READ_RETRY_S)
@@ -1164,10 +1180,9 @@ class CameraThread(threading.Thread):
                 self.fps = fc / elapsed
                 fc, t0 = 0, time.perf_counter()
 
-            frame_elapsed = (time.perf_counter() - t_frame_start) * 1000
             self.perf.mark_frame()
 
-            h, w = frame.shape[:2]
+            h = frame.shape[0]
             cv2.putText(frame, f"FPS {self.fps:.0f}", (8, 26),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (80, 220, 80), 2)
 
@@ -1236,11 +1251,11 @@ def run_action(mouse: "SmoothMouse", action: str, args):
             name = str(args)
             sys_ = _platform.system()
             if sys_ == "Darwin":
-                subprocess.Popen(["open", "-a", name])
+                subprocess.Popen(["open", "-a", name])  # pylint: disable=consider-using-with
             elif sys_ == "Windows":
-                os.startfile(name)
+                os.startfile(name)  # pylint: disable=no-member
             else:
-                subprocess.Popen(["xdg-open", name])
+                subprocess.Popen(["xdg-open", name])  # pylint: disable=consider-using-with
         elif action == 'search':
             q = quote(str(args), safe='')
             webbrowser.open(f"https://www.google.it/search?q={q}")
@@ -1335,10 +1350,14 @@ class VoiceController:
         self.history   = deque(maxlen=Cfg.VOICE_HISTORY_MAX)
 
         try:
-            import speech_recognition  # noqa: F401
+            import speech_recognition  # noqa: F401  # pylint: disable=unused-import
             self.available = True
         except ImportError:
             self.available = False
+
+    @property
+    def running(self) -> bool:
+        return self._running
 
     def start(self):
         if not self.available or self._running:
@@ -1431,16 +1450,16 @@ class AutonomousAgent:
 
         self.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         try:
-            import anthropic  # noqa: F401
-            self._has_sdk = True
+            import anthropic  # noqa: F401  # pylint: disable=unused-import
+            self.has_sdk = True
         except ImportError:
-            self._has_sdk = False
+            self.has_sdk = False
 
     @property
     def available(self) -> bool:
         # re-read key at call time so the user can set it after startup
         self.api_key = os.environ.get("ANTHROPIC_API_KEY", self.api_key)
-        return self._has_sdk and bool(self.api_key)
+        return self.has_sdk and bool(self.api_key)
 
     def run(self, goal: str):
         goal = goal.strip()
@@ -1554,6 +1573,9 @@ class GestureDatabase:
 
     def list_names(self) -> list:
         return sorted(self._d.keys())
+
+    def items(self):
+        return self._d.items()
 
     def sample_count(self, name: str) -> int:
         return len(self._d.get(name, {}).get("samples", []))
@@ -1674,7 +1696,7 @@ class CustomGestureRecogniser(GestureRecogniser):
 
     def _knn(self, fv: list) -> str | None:
         candidates: list[tuple[float, str]] = []
-        for name, entry in self._db._d.items():
+        for name, entry in self._db.items():
             for sample in entry.get("samples", []):
                 d_sq = sum((a - b) ** 2 for a, b in zip(fv, sample))
                 if d_sq < self.CONF_THRESH ** 2:
@@ -1924,7 +1946,7 @@ class Dashboard(tk.Tk):
 
         if not self._agent.available:
             hint = ("Pacchetto 'anthropic' non trovato.\nEsegui: pip install anthropic"
-                     if not self._agent._has_sdk else
+                     if not self._agent.has_sdk else
                      "Imposta la variabile ANTHROPIC_API_KEY\nper abilitare l'agente.")
             tk.Label(c1, text=hint, font=("Segoe UI", 8), bg=Cfg.BG_CARD,
                      fg=Cfg.WARNING, justify="center").pack(pady=(0, 8))
@@ -1973,27 +1995,27 @@ class Dashboard(tk.Tk):
                  font=("Segoe UI", 9, "bold"),
                  bg=Cfg.BG_MID, fg=Cfg.TEXT_DIM).pack(pady=(8, 4))
 
-        DOM_COL, MOD_COL = Cfg.ACCENT, Cfg.PURPLE
-        GUIDE = [
-            ("☝ Indice solo",         "Cursore mouse",       DOM_COL),
-            ("🤏 Pinch i+p",          "Click sx / drag",     DOM_COL),
-            ("🤏 Pinch m+p",          "Click dx",            DOM_COL),
-            ("✌ Due dita",            "Scroll verticale",    DOM_COL),
-            ("🤌 3 dita su",          "Copia  Ctrl+C",       DOM_COL),
-            ("✋ 4 dita su",          "Incolla  Ctrl+V",     DOM_COL),
-            ("👍 Solo pollice",       "Doppio click",        DOM_COL),
-            ("🤘 Rock",               "Annulla  Ctrl+Z",     DOM_COL),
-            ("🤙 Pollice+mignolo",    "Salva  Ctrl+S",       DOM_COL),
-            ("🖐 Palmo+velocità",     "Swipe ←→  Alt+←/→",  DOM_COL),
-            ("──── Mano sinistra ────","(modificatore)",      MOD_COL),
-            ("🖐 L: palmo",           "Congela cursore",     MOD_COL),
-            ("✊ L: pugno",           "Scroll = zoom",       MOD_COL),
-            ("✌ L: due dita",        "Cursore = h-scroll",  MOD_COL),
-            ("🤘 L: rock",            "Alt+Tab",             MOD_COL),
-            ("👍 L: pollice",         "Arma click centrale", MOD_COL),
+        dom_col, mod_col = Cfg.ACCENT, Cfg.PURPLE
+        guide = [
+            ("☝ Indice solo",         "Cursore mouse",       dom_col),
+            ("🤏 Pinch i+p",          "Click sx / drag",     dom_col),
+            ("🤏 Pinch m+p",          "Click dx",            dom_col),
+            ("✌ Due dita",            "Scroll verticale",    dom_col),
+            ("🤌 3 dita su",          "Copia  Ctrl+C",       dom_col),
+            ("✋ 4 dita su",          "Incolla  Ctrl+V",     dom_col),
+            ("👍 Solo pollice",       "Doppio click",        dom_col),
+            ("🤘 Rock",               "Annulla  Ctrl+Z",     dom_col),
+            ("🤙 Pollice+mignolo",    "Salva  Ctrl+S",       dom_col),
+            ("🖐 Palmo+velocità",     "Swipe ←→  Alt+←/→",  dom_col),
+            ("──── Mano sinistra ────","(modificatore)",      mod_col),
+            ("🖐 L: palmo",           "Congela cursore",     mod_col),
+            ("✊ L: pugno",           "Scroll = zoom",       mod_col),
+            ("✌ L: due dita",        "Cursore = h-scroll",  mod_col),
+            ("🤘 L: rock",            "Alt+Tab",             mod_col),
+            ("👍 L: pollice",         "Arma click centrale", mod_col),
             ("🤏+🤏 entrambi pinch", "Zoom in/out",         Cfg.SUCCESS),
         ]
-        for g, a, col in GUIDE:
+        for g, a, col in guide:
             r = tk.Frame(parent, bg=Cfg.BG_MID)
             r.pack(fill="x", padx=8, pady=1)
             tk.Label(r, text=g, font=("Segoe UI", 8),
@@ -2002,7 +2024,7 @@ class Dashboard(tk.Tk):
                      bg=Cfg.BG_MID, fg=Cfg.TEXT_DIM, anchor="w").pack(side="left")
 
     def _build_learn_tab(self, parent):
-        _ACTIONS = [
+        actions = [
             ("hotkey",        "Tasto rapido (es. ctrl+c)"),
             ("open_url",      "Apri URL"),
             ("search",        "Cerca su Google"),
@@ -2028,9 +2050,9 @@ class Dashboard(tk.Tk):
         row_a.pack(fill="x", padx=10, pady=2)
         tk.Label(row_a, text="Azione:", font=("Segoe UI", 9),
                  bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM, width=7, anchor="w").pack(side="left")
-        self._learn_action_var = tk.StringVar(value=_ACTIONS[0][0])
+        self._learn_action_var = tk.StringVar(value=actions[0][0])
         opt = tk.OptionMenu(row_a, self._learn_action_var,
-                            *[a[0] for a in _ACTIONS])
+                            *[a[0] for a in actions])
         opt.configure(bg=Cfg.BG_MID, fg=Cfg.TEXT, font=("Segoe UI", 8),
                       activebackground=Cfg.BG_CARD, relief="flat", bd=0)
         opt["menu"].configure(bg=Cfg.BG_MID, fg=Cfg.TEXT)
@@ -2112,11 +2134,11 @@ class Dashboard(tk.Tk):
         # DONE or IDLE → handled by on_done callback
 
     def _draw_progress_bar(self, frac: float):
-        bar = self._learn_prog_bar
-        bar.update_idletasks()
-        w = bar.winfo_width()
-        bar.delete("all")
-        bar.create_rectangle(0, 0, int(w * frac), 6,
+        canvas = self._learn_prog_bar
+        canvas.update_idletasks()
+        w = canvas.winfo_width()
+        canvas.delete("all")
+        canvas.create_rectangle(0, 0, int(w * frac), 6,
                              fill=Cfg.SUCCESS, outline="")
 
     def _on_recording_done(self, name: str):
@@ -2180,7 +2202,7 @@ class Dashboard(tk.Tk):
     def _toggle_voice(self):
         if not self._voice.available:
             return
-        if self._voice._running:
+        if self._voice.running:
             self._voice.stop()
             self._voice_btn.configure(text="▶  ATTIVA VOCE", bg=Cfg.SUCCESS, fg="#000000")
         else:
@@ -2248,7 +2270,7 @@ class Dashboard(tk.Tk):
         try:
             # Voice status polling
             status = self._voice.status
-            _COL = {
+            col_map = {
                 "ASCOLTO":           Cfg.SUCCESS,
                 "RICONOSCIMENTO...": Cfg.WARNING,
                 "AVVIO...":          Cfg.BLUE,
@@ -2256,7 +2278,7 @@ class Dashboard(tk.Tk):
                 "OFFLINE":           "#ff4444",
                 "MIC ERR":           Cfg.ACCENT,
             }
-            col = _COL.get(status, Cfg.TEXT_DIM)
+            col = col_map.get(status, Cfg.TEXT_DIM)
             self._voice_dot.configure(fg=col)
             self._voice_status_lbl.configure(text=status, fg=col)
             self._voice_hdr_lbl.configure(text=f"🎤 {status}", fg=col)
@@ -2298,5 +2320,5 @@ class Dashboard(tk.Tk):
 #  ENTRY POINT
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app = Dashboard()
-    app.mainloop()
+    dashboard = Dashboard()
+    dashboard.mainloop()

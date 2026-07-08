@@ -1,0 +1,45 @@
+[MAIN]
+py-version=3.10
+# Moduli hardware/AI non installabili in CI (webcam, GUI, LLM SDK)
+ignored-modules=cv2,mediapipe,pyautogui,PIL,pynput,speech_recognition,anthropic
+
+[MESSAGES CONTROL]
+disable=
+    # Stile documentazione: progetto single-file con sezioni commentate
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    # File monolitico intenzionale (vedi README architettura)
+    too-many-lines,
+    # Costanti landmark compattate su una riga (leggibilità tabellare)
+    multiple-statements,
+    # Import lazy intenzionali: dipendenze opzionali sondate a runtime
+    import-outside-toplevel,
+    # Le dipendenze pesanti non sono installate nel job di lint
+    import-error,
+    # Limiti di design: pipeline CV/gesture ha stato e branching intrinseci
+    too-many-instance-attributes,
+    too-few-public-methods,
+    too-many-public-methods,
+    too-many-return-statements,
+    too-many-branches,
+    too-many-locals,
+    too-many-statements,
+    too-many-arguments,
+    # Catch ampi intenzionali: l'app non deve mai crashare per un gesto;
+    # ogni blocco ora logga via logging (vedi log = getLogger("hgc"))
+    broad-exception-caught,
+    # Pattern builder Tkinter: i widget nascono nei metodi _build_*_tab
+    attribute-defined-outside-init,
+    # La test-suite esercita deliberatamente gli interni delle classi
+    protected-access,
+    # I test stubbano sys.modules prima dell'import dell'app (headless)
+    wrong-import-position,
+    duplicate-code
+
+[FORMAT]
+max-line-length=120
+
+[BASIC]
+good-names=i,j,k,e,f,g,a,m,n,p,q,r,s,t,w,h,x,y,z,d,c,db,lm,fv,jp,tp,pr,
+           vx,vy,dx,dy,nx,ny,ix,iy,cx,cy,ok,log,_
