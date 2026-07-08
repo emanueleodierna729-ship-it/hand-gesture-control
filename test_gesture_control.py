@@ -14,7 +14,7 @@ import json
 import time
 import tempfile
 import unittest
-import unittest.mock as mock
+from unittest import mock
 import datetime
 import argparse
 
@@ -476,7 +476,7 @@ class TestGestureDatabase(unittest.TestCase):
             suffix=".json", delete=False)
         self.tmp.close()
         self.db = GestureDatabase()
-        self.db.DB_FILE = self.tmp.name
+        self.db.DB_FILE = self.tmp.name  # pylint: disable=invalid-name
         self.db._d = {}
 
     def tearDown(self):
@@ -610,10 +610,9 @@ class TestRunAction(unittest.TestCase):
         self.mouse.zoom.assert_called_once_with(-1)
 
     def test_wait_clamped(self):
-        import time as _time
-        start = _time.monotonic()
-        run_action(self.mouse, "wait", 0.0)   # 0.0 is not falsy → sleeps 0s
-        elapsed = _time.monotonic() - start
+        start = time.monotonic()
+        run_action(self.mouse, "wait", 0.0)   # 0.0 non è None → dorme 0s
+        elapsed = time.monotonic() - start
         self.assertLess(elapsed, 0.5)
 
     def test_wait_negative_clamped_to_zero(self):
@@ -634,9 +633,9 @@ def _make_fake_anthropic(plan_json: str):
     class _Msg:
         content = [_Block()]
     class _Messages:
-        def create(self, **kw): return _Msg()
+        def create(self, **_kwargs): return _Msg()
     class _Client:
-        def __init__(self, api_key): self.messages = _Messages()
+        def __init__(self, **_kwargs): self.messages = _Messages()
     fake = mock.MagicMock()
     fake.Anthropic = _Client
     return fake
@@ -673,7 +672,7 @@ class TestAutonomousAgent(unittest.TestCase):
 
     def test_run_executes_plan(self):
         plan = '[{"action": "zoom", "args": 1}]'
-        agent, mouse, updates = self._make_agent(plan)
+        agent, mouse, _ = self._make_agent(plan)
         agent.run("zoom in")
         agent._thread.join(timeout=5)
         self.assertEqual(agent.status, "COMPLETATO")
@@ -685,11 +684,10 @@ class TestAutonomousAgent(unittest.TestCase):
         self.assertIsNone(agent._thread)
 
     def test_run_while_busy_sets_occupato(self):
-        import time as _time
         plan = '[{"action": "wait", "args": 0.3}]'
         agent, _, updates = self._make_agent(plan)
         agent.run("first goal")
-        _time.sleep(0.05)
+        time.sleep(0.05)
         agent.run("second goal while busy")
         self.assertIn("OCCUPATO", updates)
 
@@ -704,11 +702,10 @@ class TestAutonomousAgent(unittest.TestCase):
         self.assertEqual(agent.status, "ERRORE PIANO")
 
     def test_stop_interrupts_loop(self):
-        import time as _time
         plan = '[{"action":"wait","args":0.5},{"action":"wait","args":0.5},{"action":"wait","args":0.5}]'
         agent, _, _ = self._make_agent(plan)
         agent.run("long task")
-        _time.sleep(0.1)
+        time.sleep(0.1)
         agent.stop()
         agent._thread.join(timeout=5)
         # After stop(), loop exits with INTERROTTO (if mid-run) or IDLE (if stopped before start)
@@ -736,7 +733,7 @@ class TestVoiceControllerParser(unittest.TestCase):
         mouse = mock.MagicMock(spec=SmoothMouse)
         vc = VoiceController(mouse,
                              on_command=lambda t, a: received.append((t, a)),
-                             on_agent_goal=lambda g: agent_goals.append(g))
+                             on_agent_goal=agent_goals.append)
         # Simulate what _loop does when text is recognised
         text = "agente apri youtube"
         result = vc._parser.parse(text)
@@ -752,7 +749,7 @@ class TestVoiceControllerParser(unittest.TestCase):
         mouse = mock.MagicMock(spec=SmoothMouse)
         vc = VoiceController(mouse,
                              on_command=lambda t, a: None,
-                             on_agent_goal=lambda g: agent_goals.append(g))
+                             on_agent_goal=agent_goals.append)
         result = vc._parser.parse("copia")
         self.assertIsNotNone(result)
         action, _ = result

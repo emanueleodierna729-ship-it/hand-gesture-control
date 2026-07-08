@@ -242,7 +242,7 @@ Terminal=false
 Categories=Utility;
 """
             try:
-                with open(shortcut, "w") as f:
+                with open(shortcut, "w", encoding="utf-8") as f:
                     f.write(content)
                 os.chmod(shortcut, 0o755)
                 ok("Collegamento sul Desktop creato (Linux)")
@@ -251,9 +251,9 @@ Categories=Utility;
 
     elif system == "Windows":
         try:
-            import winreg  # noqa — solo Windows
+            import winreg  # noqa: F401  # pylint: disable=unused-import  (sonda: solo Windows)
             bat = os.path.join(os.path.dirname(app_path), "avvia.bat")
-            with open(bat, "w") as f:
+            with open(bat, "w", encoding="utf-8") as f:
                 f.write(f'@echo off\n"{sys.executable}" "{app_path}"\n')
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
             dst = os.path.join(desktop, "HandGestureControl.bat")
@@ -275,7 +275,7 @@ def launch_app():
 
     print(f"\n  {G}{BOLD}Avvio Hand Gesture Control…{RST}\n")
     time.sleep(0.6)
-    subprocess.Popen([sys.executable, app_path])
+    subprocess.Popen([sys.executable, app_path])  # pylint: disable=consider-using-with
 
 
 # ──────────────────────────────────────────────────────────────
