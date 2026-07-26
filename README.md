@@ -120,9 +120,10 @@ e l'app le esegue una per una.
 
 Esempio: *"agente apri youtube e cerca meteo Milano"*.
 
-Richiede il pacchetto `anthropic` (incluso negli script di installazione) e la variabile
-d'ambiente `ANTHROPIC_API_KEY`. Senza chiave configurata, la sezione **Agente** del pannello
-mostra lo stato non disponibile e la funzione resta disattivata — il resto dell'app funziona
+Richiede il pacchetto `anthropic` (incluso negli script di installazione) e una chiave API:
+puoi impostare la variabile d'ambiente `ANTHROPIC_API_KEY` prima di avviare l'app, oppure
+incollare la chiave direttamente nel tab **Agente** del pannello (campo dedicato, senza
+riavvio). Senza chiave la funzione resta disattivata — il resto dell'app funziona
 normalmente.
 
 ---
