@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="80%">
+      <stop offset="0%"  stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0b1120"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="45%" r="55%">
+      <stop offset="0%"  stop-color="#00e676" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#00e676" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="stroke" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%"  stop-color="#00c853"/>
+      <stop offset="100%" stop-color="#69f0ae"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Android adaptive-icon squircle -->
+  <rect x="0" y="0" width="512" height="512" rx="115" fill="url(#bg)"/>
+  <rect x="0" y="0" width="512" height="512" rx="115" fill="url(#glow)"/>
+  <rect x="8" y="8" width="496" height="496" rx="108" fill="none"
+        stroke="#334155" stroke-width="3" opacity="0.6"/>
+
+  <!-- Hand landmark skeleton (MediaPipe style) -->
+  <g filter="url(#soft)">
+    <g stroke="url(#stroke)" stroke-width="11" stroke-linecap="round" fill="none">
+      <!-- palm web -->
+      <path d="M256 430 L185 390"/>
+      <path d="M256 430 L205 300"/>
+      <path d="M256 430 L250 290"/>
+      <path d="M256 430 L295 300"/>
+      <path d="M256 430 L335 320"/>
+      <path d="M185 390 L205 300 L250 290 L295 300 L335 320"/>
+      <!-- thumb -->
+      <path d="M185 390 L150 350 L125 315 L105 285"/>
+      <!-- index -->
+      <path d="M205 300 L195 245 L188 200 L183 160"/>
+      <!-- middle -->
+      <path d="M250 290 L248 225 L247 172 L246 125"/>
+      <!-- ring -->
+      <path d="M295 300 L302 240 L307 192 L311 150"/>
+      <!-- pinky -->
+      <path d="M335 320 L352 272 L363 235 L372 200"/>
+    </g>
+
+    <!-- landmark dots -->
+    <g fill="#eafff3" stroke="#00c853" stroke-width="5">
+      <circle cx="256" cy="430" r="15"/>
+      <circle cx="185" cy="390" r="11"/>
+      <circle cx="205" cy="300" r="11"/>
+      <circle cx="250" cy="290" r="11"/>
+      <circle cx="295" cy="300" r="11"/>
+      <circle cx="335" cy="320" r="11"/>
+      <circle cx="150" cy="350" r="9"/>
+      <circle cx="125" cy="315" r="9"/>
+      <circle cx="105" cy="285" r="10"/>
+      <circle cx="195" cy="245" r="9"/>
+      <circle cx="188" cy="200" r="9"/>
+      <circle cx="248" cy="225" r="9"/>
+      <circle cx="247" cy="172" r="9"/>
+      <circle cx="246" cy="125" r="10"/>
+      <circle cx="302" cy="240" r="9"/>
+      <circle cx="307" cy="192" r="9"/>
+      <circle cx="311" cy="150" r="10"/>
+      <circle cx="352" cy="272" r="9"/>
+      <circle cx="363" cy="235" r="9"/>
+      <circle cx="372" cy="200" r="10"/>
+    </g>
+
+    <!-- cursor target on index fingertip -->
+    <circle cx="183" cy="160" r="30" fill="none" stroke="#22d3ee"
+            stroke-width="7" stroke-dasharray="12 10" opacity="0.95"/>
+    <circle cx="183" cy="160" r="11" fill="#22d3ee"/>
+  </g>
+</svg>
