@@ -11,6 +11,11 @@ e avviare automaticamente l'applicazione.
 Requisiti minimi: Python 3.8+
 """
 
+from __future__ import annotations
+
+# winreg esiste solo su Windows, non risolvibile sul runner CI Linux
+# pylint: disable=import-error
+
 import subprocess
 import sys
 import os
@@ -251,7 +256,7 @@ Categories=Utility;
 
     elif system == "Windows":
         try:
-            import winreg  # noqa — solo Windows  # pylint: disable=import-error,unused-import
+            import winreg  # noqa — solo Windows
             bat = os.path.join(os.path.dirname(app_path), "avvia.bat")
             with open(bat, "w") as f:
                 f.write(f'@echo off\n"{sys.executable}" "{app_path}"\n')

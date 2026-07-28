@@ -6,6 +6,10 @@ Dual-hand support · Landmark EMA smoothing · Temporal gesture stabilisation
 
 from __future__ import annotations
 
+# La CI lint-only non installa le dipendenze runtime (cv2, mediapipe, ...):
+# gli import di terze parti non sono verificabili lì.
+# pylint: disable=import-error
+
 import logging
 import cv2
 import mediapipe as mp
@@ -1211,7 +1215,8 @@ def run_action(mouse: "SmoothMouse", action: str, args):
             if sys_ == "Darwin":
                 subprocess.Popen(["open", "-a", name])
             elif sys_ == "Windows":
-                os.startfile(name)  # pylint: disable=no-member  (solo Windows)
+                # API disponibile solo su Windows
+                os.startfile(name)  # pylint: disable=no-member
             else:
                 subprocess.Popen(["xdg-open", name])
         elif action == 'search':
@@ -1331,7 +1336,7 @@ class VoiceController:
         self.status   = "OFFLINE"
 
     def _loop(self):
-        import speech_recognition as sr  # pylint: disable=import-error
+        import speech_recognition as sr
         rec = sr.Recognizer()
         try:
             with sr.Microphone() as mic:
@@ -1490,7 +1495,7 @@ class AutonomousAgent:
 
     def _plan(self, goal: str) -> list[dict] | None:
         try:
-            import anthropic  # pylint: disable=import-error
+            import anthropic
             client = anthropic.Anthropic(api_key=self.api_key)
             prompt = (
                 "Sei un agente che controlla un PC eseguendo una sequenza fissa "
