@@ -1,4 +1,8 @@
-inviami ✋ Hand Gesture Control v2
+<p align="center">
+  <img src="assets/logo_192.png" alt="Hand Gesture Control logo" width="128">
+</p>
+
+# ✋ Hand Gesture Control v2
 
 > Controlla il tuo PC con la **webcam** e i **gesti delle mani** — nessun hardware aggiuntivo.
 
@@ -6,6 +10,16 @@ inviami ✋ Hand Gesture Control v2
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-0.10-green?logo=google)](https://mediapipe.dev)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
 [![License](https://img.shields.io/badge/License-MIT-orange)]()
+
+---
+
+## ⬇️ Download
+
+**[Scarica l'app (ZIP)](https://github.com/emanueleodierna729-ship-it/hand-gesture-control/archive/refs/heads/main.zip)** — poi segui l'installazione rapida qui sotto.
+
+> ⚠️ **Nota piattaforme**: l'app gira su **Windows, macOS e Linux** (serve webcam e controllo di mouse/tastiera del PC).
+> **Non è un'app Android**: dal telefono puoi scaricare lo ZIP e condividerlo, ma per usarla serve un computer.
+> Il logo in `assets/` è già pronto nei formati icona Android (192px, 512px) per un eventuale port futuro.
 
 ---
 
@@ -120,9 +134,10 @@ e l'app le esegue una per una.
 
 Esempio: *"agente apri youtube e cerca meteo Milano"*.
 
-Richiede il pacchetto `anthropic` (incluso negli script di installazione) e la variabile
-d'ambiente `ANTHROPIC_API_KEY`. Senza chiave configurata, la sezione **Agente** del pannello
-mostra lo stato non disponibile e la funzione resta disattivata — il resto dell'app funziona
+Richiede il pacchetto `anthropic` (incluso negli script di installazione) e una chiave API:
+puoi impostare la variabile d'ambiente `ANTHROPIC_API_KEY` prima di avviare l'app, oppure
+incollare la chiave direttamente nel tab **Agente** del pannello (campo dedicato, senza
+riavvio). Senza chiave la funzione resta disattivata — il resto dell'app funziona
 normalmente.
 
 ---

@@ -34,11 +34,6 @@ try:
 except ImportError:
     PYNPUT_OK = False
 
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s  %(levelname)-7s  %(name)s — %(message)s",
-    datefmt="%H:%M:%S",
-)
 log = logging.getLogger("hgc")
 
 
@@ -941,38 +936,7 @@ class DualHandProcessor:
 
     # ── custom gesture executor ───────────────────────────────
     def _exec_custom(self, action: str, args):
-        m = self.mouse
-        try:
-            if action == "hotkey" and args:
-                if isinstance(args, list):
-                    keys = args
-                elif isinstance(args, str) and "+" in args:
-                    keys = [k.strip() for k in args.split("+") if k.strip()]
-                else:
-                    keys = [str(args)]
-                m.hotkey(*keys)
-            elif action == "open_url" and args:
-                url = str(args)
-                if not url.startswith("http"):
-                    url = "https://" + url
-                webbrowser.open(url)
-            elif action == "search" and args:
-                q = quote(str(args), safe='')
-                webbrowser.open(f"https://www.google.it/search?q={q}")
-            elif action == "zoom" and args is not None:
-                m.zoom(int(args))
-            elif action == "screenshot":
-                ts   = time.strftime("%Y%m%d_%H%M%S")
-                path = os.path.expanduser(f"~/Desktop/screenshot_{ts}.png")
-                pyautogui.screenshot(path)
-            elif action == "type" and args:
-                pyautogui.write(str(args), interval=Cfg.TYPE_INTERVAL)
-            elif action == "create_folder":
-                name   = str(args) if args else "Nuova Cartella"
-                target = os.path.join(os.path.expanduser("~"), "Desktop", name)
-                os.makedirs(target, exist_ok=True)
-        except Exception as e:
-            log.warning("custom action %r failed: %s", action, e)
+        run_action(self.mouse, action, args)
 
     # ── helpers ───────────────────────────────────────────────
     def _reset_pinch(self):
@@ -1229,10 +1193,13 @@ class CameraThread(threading.Thread):
 def run_action(mouse: "SmoothMouse", action: str, args):
     """Execute a single parsed command (open_url, hotkey, type, ...).
 
-    Shared by VoiceController (direct voice commands) and AutonomousAgent
-    (LLM-planned command sequences) so both dispatch through one vocabulary.
+    Shared by VoiceController (direct voice commands), AutonomousAgent
+    (LLM-planned command sequences) and DualHandProcessor (custom gestures)
+    so all dispatch through one vocabulary.
     """
     try:
+        if action in ('open_url', 'open_app', 'search', 'type', 'hotkey') and not args:
+            return
         if action == 'open_url':
             url = str(args)
             if not url.startswith('http'):
@@ -1255,9 +1222,14 @@ def run_action(mouse: "SmoothMouse", action: str, args):
             target = os.path.join(os.path.expanduser("~"), "Desktop", name)
             os.makedirs(target, exist_ok=True)
         elif action == 'hotkey':
-            keys = args if isinstance(args, (list, tuple)) else (args,)
+            if isinstance(args, (list, tuple)):
+                keys = args
+            elif isinstance(args, str) and '+' in args:
+                keys = [k.strip() for k in args.split('+') if k.strip()]
+            else:
+                keys = (args,)
             mouse.hotkey(*keys)
-        elif action == 'zoom':
+        elif action == 'zoom' and args is not None:
             mouse.zoom(int(args))
         elif action == 'type':
             pyautogui.write(str(args), interval=Cfg.TYPE_INTERVAL)
@@ -1273,7 +1245,7 @@ def run_action(mouse: "SmoothMouse", action: str, args):
 
 class CommandParser:
     _CMDS = [
-        (r'(?:agente|obiettivo|modalit[a\xe0]\s+autonoma)\s+(.+)', 'agent', None),
+        (r'\b(?:agente|obiettivo|modalit[a\xe0]\s+autonoma)\s+(.+)', 'agent', None),
         (r'apri\s+youtube\b',                 'open_url',      'https://www.youtube.com'),
         (r'apri\s+google\b',                  'open_url',      'https://www.google.it'),
         (r'apri\s+gmail\b',                   'open_url',      'https://mail.google.com'),
@@ -1429,6 +1401,7 @@ class AutonomousAgent:
         self._mouse   = mouse
         self._cb      = on_update or (lambda: None)
         self._running = False
+        self._lock    = threading.Lock()
         self._thread  = None
         self.status   = "IDLE"
         self.goal     = ""
@@ -1444,27 +1417,37 @@ class AutonomousAgent:
 
     @property
     def available(self) -> bool:
-        # re-read key at call time so the user can set it after startup
+        # re-read key at call time: the user can supply it after startup
+        # (Agente tab entry via set_api_key, or in-process env change)
         self.api_key = os.environ.get("ANTHROPIC_API_KEY", self.api_key)
         return self._has_sdk and bool(self.api_key)
+
+    def set_api_key(self, key: str) -> bool:
+        """Set the API key at runtime (from the Agente tab). Returns availability."""
+        key = key.strip()
+        if key:
+            os.environ["ANTHROPIC_API_KEY"] = key
+            self.api_key = key
+        return self.available
 
     def run(self, goal: str):
         goal = goal.strip()
         if not goal:
             return
-        if self._running:
-            self.status = "OCCUPATO"
-            self._cb()
-            return
-        if not self.available:
-            self.status = "NON DISPONIBILE"
-            self._cb()
-            return
-        self.goal        = goal
-        self.log         = []
-        self.last_error  = ""
-        self._running    = True
-        self._thread     = threading.Thread(target=self._loop, args=(goal,), daemon=True)
+        with self._lock:
+            if self._running:
+                self.status = "OCCUPATO"
+                self._cb()
+                return
+            if not self.available:
+                self.status = "NON DISPONIBILE"
+                self._cb()
+                return
+            self.goal        = goal
+            self.log         = []
+            self.last_error  = ""
+            self._running    = True
+        self._thread = threading.Thread(target=self._loop, args=(goal,), daemon=True)
         self._thread.start()
 
     def stop(self):
@@ -1472,32 +1455,38 @@ class AutonomousAgent:
         self.status = "IDLE"
 
     def _loop(self, goal: str):
-        self.status = "PIANIFICO..."
-        self._cb()
-        plan = self._plan(goal)
-        if not plan:
-            self.status = "ERRORE PIANO"
+        try:
+            self.status = "PIANIFICO..."
+            self._cb()
+            plan = self._plan(goal)
+            if not plan:
+                self.status = "ERRORE PIANO"
+                return
+
+            total = len(plan)
+            for i, step in enumerate(plan):
+                if not self._running:
+                    break
+                action, args = step.get("action"), step.get("args")
+                self.status = f"STEP {i + 1}/{total}: {action}"
+                entry = {"action": action, "args": args, "done": False}
+                self.log.append(entry)
+                self._cb()
+                run_action(self._mouse, action, args)
+                entry["done"] = True
+                self._cb()
+                time.sleep(Cfg.AGENT_STEP_DELAY)
+
+            self.status = "COMPLETATO" if self._running else "INTERROTTO"
+        except Exception as e:
+            self.last_error = str(e)[:80]
+            self.status = "ERRORE"
+            log.error("agent loop failed: %s", e)
+        finally:
+            # always release the busy flag, even on unexpected errors,
+            # so the agent never wedges in OCCUPATO
             self._running = False
             self._cb()
-            return
-
-        total = len(plan)
-        for i, step in enumerate(plan):
-            if not self._running:
-                break
-            action, args = step.get("action"), step.get("args")
-            self.status = f"STEP {i + 1}/{total}: {action}"
-            entry = {"action": action, "args": args, "done": False}
-            self.log.append(entry)
-            self._cb()
-            run_action(self._mouse, action, args)
-            entry["done"] = True
-            self._cb()
-            time.sleep(Cfg.AGENT_STEP_DELAY)
-
-        self.status   = "COMPLETATO" if self._running else "INTERROTTO"
-        self._running = False
-        self._cb()
 
     def _plan(self, goal: str) -> list[dict] | None:
         try:
@@ -1523,8 +1512,14 @@ class AutonomousAgent:
             text = re.sub(r'^```(?:json)?|```$', '', text, flags=re.MULTILINE).strip()
             plan = json.loads(text)
             if not isinstance(plan, list):
+                self.last_error = "risposta LLM non è un array JSON"
                 return None
-            return plan[:Cfg.AGENT_MAX_STEPS]
+            steps = [s for s in plan[:Cfg.AGENT_MAX_STEPS]
+                     if isinstance(s, dict) and isinstance(s.get("action"), str)]
+            if not steps:
+                self.last_error = "nessuno step valido nel piano"
+                return None
+            return steps
         except Exception as e:
             self.last_error = str(e)[:80]
             return None
@@ -1706,6 +1701,9 @@ class Dashboard(tk.Tk):
         self._db         = GestureDatabase()
         self._recogniser = CustomGestureRecogniser(self._db)
         self._recorder   = GestureRecorder(self._db, self._recogniser)
+        # UI callables posted from worker threads, drained by _loop in the
+        # Tk main thread (tkinter.after is not safe from other threads)
+        self._ui_events: deque = deque()
         self._agent      = AutonomousAgent(self.mouse, self._on_agent_update)
         self._voice      = VoiceController(self.mouse, self._on_voice_cmd,
                                             on_agent_goal=self._agent.run)
@@ -1929,14 +1927,28 @@ class Dashboard(tk.Tk):
         if not self._agent.available:
             hint = ("Pacchetto 'anthropic' non trovato.\nEsegui: pip install anthropic"
                      if not self._agent._has_sdk else
-                     "Imposta la variabile ANTHROPIC_API_KEY\nper abilitare l'agente.")
-            tk.Label(c1, text=hint, font=("Segoe UI", 8), bg=Cfg.BG_CARD,
-                     fg=Cfg.WARNING, justify="center").pack(pady=(0, 8))
+                     "Imposta ANTHROPIC_API_KEY oppure\nincolla la chiave qui sotto.")
+            col = Cfg.WARNING
         else:
-            tk.Label(c1,
-                     text="Pianifica ed esegue obiettivi multi-step\ncon un set di azioni predefinite",
-                     font=("Segoe UI", 8), bg=Cfg.BG_CARD, fg=Cfg.TEXT_DIM,
-                     justify="center").pack(pady=(0, 8))
+            hint = "Pianifica ed esegue obiettivi multi-step\ncon un set di azioni predefinite"
+            col = Cfg.TEXT_DIM
+        self._agent_hint_lbl = tk.Label(c1, text=hint, font=("Segoe UI", 8),
+                                         bg=Cfg.BG_CARD, fg=col, justify="center")
+        self._agent_hint_lbl.pack(pady=(0, 8))
+
+        # runtime API-key entry — shown when the SDK is installed but no key is set
+        if self._agent._has_sdk and not self._agent.available:
+            krow = tk.Frame(c1, bg=Cfg.BG_CARD)
+            krow.pack(fill="x", padx=10, pady=(0, 8))
+            self._agent_key_var = tk.StringVar()
+            tk.Entry(krow, textvariable=self._agent_key_var, show="•",
+                     font=("Segoe UI", 9), bg=Cfg.BG_MID, fg=Cfg.TEXT,
+                     insertbackground=Cfg.TEXT, relief="flat").pack(
+                side="left", fill="x", expand=True, ipady=3)
+            tk.Button(krow, text="ATTIVA", font=("Segoe UI", 8, "bold"),
+                      bg=Cfg.BLUE, fg="#000000", relief="flat", bd=0,
+                      cursor="hand2", command=self._save_agent_key).pack(
+                side="left", padx=(6, 0))
 
         c2 = self._card(parent, "OBIETTIVO")
         self._agent_goal_var = tk.StringVar()
@@ -2124,7 +2136,8 @@ class Dashboard(tk.Tk):
                              fill=Cfg.SUCCESS, outline="")
 
     def _on_recording_done(self, name: str):
-        self.after(0, self._recording_done_ui, name)
+        # called from the camera thread — defer to the Tk main loop
+        self._ui_events.append(lambda: self._recording_done_ui(name))
 
     def _recording_done_ui(self, name: str):
         n = self._db.sample_count(name)
@@ -2192,7 +2205,8 @@ class Dashboard(tk.Tk):
             self._voice_btn.configure(text="⏹  DISATTIVA VOCE", bg=Cfg.ACCENT, fg=Cfg.TEXT)
 
     def _on_voice_cmd(self, text: str, action):
-        self.after(0, self._update_voice_ui, text, action)
+        # called from the voice thread — defer to the Tk main loop
+        self._ui_events.append(lambda: self._update_voice_ui(text, action))
 
     def _update_voice_ui(self, text: str, action):
         icon = "✓" if action else "✗"
@@ -2206,8 +2220,23 @@ class Dashboard(tk.Tk):
         if goal:
             self._agent.run(goal)
 
+    def _save_agent_key(self):
+        if self._agent.set_api_key(self._agent_key_var.get()):
+            self._agent_key_var.set("")
+            self._refresh_agent_availability()
+
+    def _refresh_agent_availability(self):
+        """Enable the ESEGUI button once the agent becomes available."""
+        if self._agent.available and str(self._agent_run_btn["state"]) == "disabled":
+            self._agent_run_btn.configure(state="normal", bg=Cfg.SUCCESS,
+                                           cursor="hand2")
+            self._agent_hint_lbl.configure(
+                text="Pianifica ed esegue obiettivi multi-step\ncon un set di azioni predefinite",
+                fg=Cfg.TEXT_DIM)
+
     def _on_agent_update(self):
-        self.after(0, self._update_agent_ui)
+        # called from the agent/voice threads — defer to the Tk main loop
+        self._ui_events.append(self._update_agent_ui)
 
     def _update_agent_ui(self):
         lines = []
@@ -2224,6 +2253,13 @@ class Dashboard(tk.Tk):
         self._cam.start_capture()
 
     def _loop(self):
+        # Drain UI events posted by worker threads (voice, agent, recorder)
+        while self._ui_events:
+            try:
+                self._ui_events.popleft()()
+            except Exception as e:
+                log.debug("UI event error: %s", e)
+
         try:
             if self._cam:
                 frame = self._cam.get_frame()
@@ -2274,7 +2310,7 @@ class Dashboard(tk.Tk):
                 col = Cfg.BLUE
             elif status == "COMPLETATO":
                 col = Cfg.SUCCESS
-            elif status in ("ERRORE PIANO", "INTERROTTO"):
+            elif status in ("ERRORE PIANO", "ERRORE", "INTERROTTO"):
                 col = Cfg.ACCENT
             elif status == "PIANIFICO...":
                 col = Cfg.WARNING
@@ -2282,6 +2318,7 @@ class Dashboard(tk.Tk):
                 col = Cfg.TEXT_DIM
             self._agent_dot.configure(fg=col)
             self._agent_status_lbl.configure(text=status, fg=col)
+            self._refresh_agent_availability()
         except Exception as e:
             log.debug("UI agent update error: %s", e)
 
@@ -2302,5 +2339,10 @@ class Dashboard(tk.Tk):
 #  ENTRY POINT
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s  %(levelname)-7s  %(name)s — %(message)s",
+        datefmt="%H:%M:%S",
+    )
     app = Dashboard()
     app.mainloop()

@@ -622,6 +622,23 @@ class TestRunAction(unittest.TestCase):
     def test_unknown_action_silent(self):
         run_action(self.mouse, "nonexistent_action", None)  # must not raise
 
+    def test_hotkey_string_with_plus_is_split(self):
+        run_action(self.mouse, "hotkey", "ctrl+shift+s")
+        self.mouse.hotkey.assert_called_once_with("ctrl", "shift", "s")
+
+    def test_hotkey_without_args_ignored(self):
+        run_action(self.mouse, "hotkey", None)
+        self.mouse.hotkey.assert_not_called()
+
+    def test_open_url_without_args_ignored(self):
+        with mock.patch("hand_gesture_control.webbrowser") as wb:
+            run_action(self.mouse, "open_url", None)
+            wb.open.assert_not_called()
+
+    def test_zoom_without_args_ignored(self):
+        run_action(self.mouse, "zoom", None)
+        self.mouse.zoom.assert_not_called()
+
 
 # ─────────────────────────────────────────────────────────────
 #  TEST: AutonomousAgent
@@ -723,6 +740,58 @@ class TestAutonomousAgent(unittest.TestCase):
         finally:
             del os.environ["ANTHROPIC_API_KEY"]
 
+    def test_set_api_key_enables_agent(self):
+        agent, _, _ = self._make_agent(api_key="")
+        self.assertFalse(agent.available)
+        try:
+            self.assertTrue(agent.set_api_key("  gui-key  "))
+            self.assertEqual(agent.api_key, "gui-key")
+            self.assertTrue(agent.available)
+        finally:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+
+    def test_set_api_key_blank_is_noop(self):
+        agent, _, _ = self._make_agent(api_key="")
+        self.assertFalse(agent.set_api_key("   "))
+        self.assertNotIn("ANTHROPIC_API_KEY", os.environ)
+
+    def test_plan_non_dict_items_are_filtered(self):
+        # a stray string in the plan must not crash the thread nor wedge OCCUPATO
+        plan = '[{"action": "zoom", "args": 1}, "done"]'
+        agent, mouse, _ = self._make_agent(plan)
+        agent.run("zoom then junk")
+        agent._thread.join(timeout=5)
+        self.assertEqual(agent.status, "COMPLETATO")
+        self.assertFalse(agent._running)
+        mouse.zoom.assert_called_once_with(1)
+
+    def test_plan_all_invalid_items_sets_errore_piano(self):
+        agent, _, _ = self._make_agent('["open youtube", 42]')
+        agent.run("junk plan")
+        agent._thread.join(timeout=5)
+        self.assertEqual(agent.status, "ERRORE PIANO")
+        self.assertTrue(agent.last_error)
+        self.assertFalse(agent._running)   # agent must not stay busy
+
+    def test_plan_dict_instead_of_list_sets_last_error(self):
+        agent, _, _ = self._make_agent('{"steps": [{"action": "zoom"}]}')
+        agent.run("dict plan")
+        agent._thread.join(timeout=5)
+        self.assertEqual(agent.status, "ERRORE PIANO")
+        self.assertTrue(agent.last_error)
+
+    def test_agent_reusable_after_plan_error(self):
+        # after a failed plan the agent must accept a new goal (no OCCUPATO wedge)
+        agent, mouse, updates = self._make_agent('["junk"]')
+        agent.run("first")
+        agent._thread.join(timeout=5)
+        sys.modules["anthropic"] = _make_fake_anthropic('[{"action": "zoom", "args": -1}]')
+        agent.run("second")
+        agent._thread.join(timeout=5)
+        self.assertNotIn("OCCUPATO", updates[-3:])
+        self.assertEqual(agent.status, "COMPLETATO")
+        mouse.zoom.assert_called_once_with(-1)
+
 
 # ─────────────────────────────────────────────────────────────
 #  TEST: VoiceController (mocked speech_recognition)
@@ -765,12 +834,28 @@ class TestVoiceControllerParser(unittest.TestCase):
         self.assertEqual(vc.history.maxlen, Cfg.VOICE_HISTORY_MAX)
 
     def test_available_false_without_sr(self):
+        # Force the import inside __init__ to fail, whatever is installed
+        import builtins
+        real_import = builtins.__import__
+
+        def _no_sr(name, *a, **k):
+            if name == "speech_recognition":
+                raise ImportError("forced for test")
+            return real_import(name, *a, **k)
+
         sys.modules.pop("speech_recognition", None)
-        # If speech_recognition was never importable, available should be False
+        mouse = mock.MagicMock(spec=SmoothMouse)
+        with mock.patch("builtins.__import__", side_effect=_no_sr):
+            vc = VoiceController(mouse, on_command=lambda t, a: None)
+        self.assertFalse(vc.available)
+
+    def test_reagente_does_not_trigger_agent(self):
+        # 'agente' requires a word boundary: 'reagente' must not dispatch the agent
         mouse = mock.MagicMock(spec=SmoothMouse)
         vc = VoiceController(mouse, on_command=lambda t, a: None)
-        # available depends on import at __init__ time; it's already False in headless env
-        self.assertIsInstance(vc.available, bool)
+        result = vc._parser.parse("il reagente apre la valvola")
+        if result is not None:
+            self.assertNotEqual(result[0], "agent")
 
 
 # ─────────────────────────────────────────────────────────────
