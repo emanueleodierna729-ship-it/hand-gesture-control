@@ -1,0 +1,9 @@
+[MAIN]
+# La CI installa solo pylint (niente cv2/mediapipe/ecc.), quindi il gate
+# copre errori reali (E) e fatal (F): bug concreti, nomi inesistenti,
+# import rotti. Le convenzioni di stile non bloccano la build.
+py-version = 3.8
+
+[MESSAGES CONTROL]
+disable=all
+enable=E,F

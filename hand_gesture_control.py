@@ -1211,7 +1211,7 @@ def run_action(mouse: "SmoothMouse", action: str, args):
             if sys_ == "Darwin":
                 subprocess.Popen(["open", "-a", name])
             elif sys_ == "Windows":
-                os.startfile(name)
+                os.startfile(name)  # pylint: disable=no-member  (solo Windows)
             else:
                 subprocess.Popen(["xdg-open", name])
         elif action == 'search':
@@ -1331,7 +1331,7 @@ class VoiceController:
         self.status   = "OFFLINE"
 
     def _loop(self):
-        import speech_recognition as sr
+        import speech_recognition as sr  # pylint: disable=import-error
         rec = sr.Recognizer()
         try:
             with sr.Microphone() as mic:
@@ -1490,7 +1490,7 @@ class AutonomousAgent:
 
     def _plan(self, goal: str) -> list[dict] | None:
         try:
-            import anthropic
+            import anthropic  # pylint: disable=import-error
             client = anthropic.Anthropic(api_key=self.api_key)
             prompt = (
                 "Sei un agente che controlla un PC eseguendo una sequenza fissa "
