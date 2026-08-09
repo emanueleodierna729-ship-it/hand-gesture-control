@@ -11,6 +11,11 @@ e avviare automaticamente l'applicazione.
 Requisiti minimi: Python 3.8+
 """
 
+from __future__ import annotations
+
+# winreg esiste solo su Windows, non risolvibile sul runner CI Linux
+# pylint: disable=import-error
+
 import subprocess
 import sys
 import os

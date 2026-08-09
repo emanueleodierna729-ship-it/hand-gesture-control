@@ -6,6 +6,10 @@ Dual-hand support · Landmark EMA smoothing · Temporal gesture stabilisation
 
 from __future__ import annotations
 
+# La CI lint-only non installa le dipendenze runtime (cv2, mediapipe, ...):
+# gli import di terze parti non sono verificabili lì.
+# pylint: disable=import-error
+
 import logging
 import cv2
 import mediapipe as mp
@@ -1211,7 +1215,8 @@ def run_action(mouse: "SmoothMouse", action: str, args):
             if sys_ == "Darwin":
                 subprocess.Popen(["open", "-a", name])
             elif sys_ == "Windows":
-                os.startfile(name)
+                # API disponibile solo su Windows
+                os.startfile(name)  # pylint: disable=no-member
             else:
                 subprocess.Popen(["xdg-open", name])
         elif action == 'search':
