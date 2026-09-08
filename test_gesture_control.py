@@ -129,6 +129,16 @@ def _pinch_hand():
     return lm
 
 
+def _pinch_hand_at(dist):
+    """Fist hand with thumb-index tips separated by exactly `dist` (normalised units)."""
+    lm = _fist_hand()
+    lm[HandTracker.THUMB_TIP]  = (0.50, 0.50, 0.0)
+    lm[HandTracker.THUMB_IP]   = (0.45, 0.50, 0.0)
+    lm[HandTracker.INDEX_TIP]  = (0.50 + dist, 0.50, 0.0)
+    lm[HandTracker.INDEX_PIP]  = (0.50, 0.60, 0.0)
+    return lm
+
+
 # ─────────────────────────────────────────────────────────────
 #  TEST: CommandParser
 # ─────────────────────────────────────────────────────────────
@@ -415,6 +425,52 @@ class TestGestureRecogniser(unittest.TestCase):
     def test_pinch(self):
         lm = _pinch_hand()
         self.assertEqual(self.rec.classify(lm), G.PINCH)
+
+
+# ─────────────────────────────────────────────────────────────
+#  TEST: GestureRecogniser pinch hysteresis (Schmitt trigger)
+# ─────────────────────────────────────────────────────────────
+class TestPinchHysteresis(unittest.TestCase):
+    def setUp(self):
+        self.rec     = GestureRecogniser()
+        self.engage  = Cfg.PINCH_THRESH
+        self.release = Cfg.PINCH_THRESH * Cfg.PINCH_RELEASE_RATIO
+        self.mid     = (self.engage + self.release) / 2  # inside the hysteresis band
+
+    def test_engages_below_threshold(self):
+        lm = _pinch_hand_at(self.engage - 0.005)
+        self.assertEqual(self.rec.classify(lm), G.PINCH)
+
+    def test_does_not_engage_from_inside_band(self):
+        lm = _pinch_hand_at(self.mid)
+        self.assertEqual(self.rec.classify(lm), G.CURSOR)
+
+    def test_stays_latched_inside_band_once_engaged(self):
+        self.rec.classify(_pinch_hand_at(self.engage - 0.005))
+        # Distance rose above the raw engage threshold but is still below the
+        # release threshold: without hysteresis this would flicker to CURSOR.
+        result = self.rec.classify(_pinch_hand_at(self.mid))
+        self.assertEqual(result, G.PINCH)
+
+    def test_releases_above_release_threshold(self):
+        self.rec.classify(_pinch_hand_at(self.engage - 0.005))
+        result = self.rec.classify(_pinch_hand_at(self.release + 0.01))
+        self.assertEqual(result, G.CURSOR)
+
+    def test_per_hand_state_is_isolated(self):
+        self.rec.classify(_pinch_hand_at(self.engage - 0.005), "dom")
+        # "mod" must not inherit "dom"'s latched state at the same distance
+        mod_result = self.rec.classify(_pinch_hand_at(self.mid), "mod")
+        self.assertEqual(mod_result, G.CURSOR)
+        # "dom" itself should still be latched
+        dom_result = self.rec.classify(_pinch_hand_at(self.mid), "dom")
+        self.assertEqual(dom_result, G.PINCH)
+
+    def test_reset_clears_latched_state(self):
+        self.rec.classify(_pinch_hand_at(self.engage - 0.005), "dom")
+        self.rec.reset("dom")
+        result = self.rec.classify(_pinch_hand_at(self.mid), "dom")
+        self.assertEqual(result, G.CURSOR)
 
     def test_fingers_up_all(self):
         lm = _flat_hand()
@@ -870,6 +926,7 @@ def _build_suite():
         TestGestureStabiliser,
         TestVelocityTracker,
         TestGestureRecogniser,
+        TestPinchHysteresis,
         TestSmoothMouseCoords,
         TestGestureDatabase,
         TestCustomGestureRecogniser,

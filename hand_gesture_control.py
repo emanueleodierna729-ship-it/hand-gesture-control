@@ -160,6 +160,7 @@ class Cfg:
     # Mouse
     SMOOTH       = 0.28           # legacy, kept for compatibility
     PINCH_THRESH = 0.042
+    PINCH_RELEASE_RATIO = 1.25    # hysteresis: release dist = engage * ratio (prevents flicker at boundary)
     DRAG_THRESH  = 0.032
     SCROLL_SENS  = 18
     CLICK_CD     = 0.30
@@ -459,6 +460,25 @@ class GestureRecogniser:
     _PINCH_TI_THRESH = Cfg.PINCH_THRESH
     _PINCH_TM_THRESH = Cfg.PINCH_THRESH * 1.2
     _PINCH_TP_THRESH = Cfg.PINCH_THRESH * 1.3
+    _RELEASE_RATIO   = Cfg.PINCH_RELEASE_RATIO
+
+    def __init__(self):
+        self._pinch_active: dict[tuple[str, str], bool] = {}
+
+    def reset(self, hand_key: str = "default"):
+        """Clear pinch hysteresis state for a hand (call when the hand is lost)."""
+        for name in ("ti", "tm", "tp"):
+            self._pinch_active.pop((hand_key, name), None)
+
+    def _hyst(self, hand_key: str, name: str, dist: float, engage: float) -> bool:
+        """Schmitt-trigger threshold: engages below `engage`, releases only
+        above `engage * _RELEASE_RATIO`, so a distance hovering near the
+        boundary no longer flips the gesture every frame."""
+        key = (hand_key, name)
+        active = self._pinch_active.get(key, False)
+        active = dist < (engage * self._RELEASE_RATIO) if active else dist < engage
+        self._pinch_active[key] = active
+        return active
 
     def fingers_up(self, lm: list) -> list[bool]:
         """Returns [thumb, index, middle, ring, pinky] True = extended."""
@@ -478,7 +498,7 @@ class GestureRecogniser:
     def pinch(self, lm: list, a: int, b: int) -> float:
         return math.hypot(lm[a][0] - lm[b][0], lm[a][1] - lm[b][1])
 
-    def classify(self, lm: list | None) -> str:
+    def classify(self, lm: list | None, hand_key: str = "default") -> str:
         if lm is None:
             return G.NONE
 
@@ -490,11 +510,15 @@ class GestureRecogniser:
         d_tm = self.pinch(lm, self.H.THUMB_TIP, self.H.MIDDLE_TIP)
         d_tp = self.pinch(lm, self.H.THUMB_TIP, self.H.PINKY_TIP)
 
-        if d_ti < self._PINCH_TI_THRESH and idx and not mid and not ring and not pinky:
+        ti_pinched = self._hyst(hand_key, "ti", d_ti, self._PINCH_TI_THRESH)
+        tm_pinched = self._hyst(hand_key, "tm", d_tm, self._PINCH_TM_THRESH)
+        tp_pinched = self._hyst(hand_key, "tp", d_tp, self._PINCH_TP_THRESH)
+
+        if ti_pinched and idx and not mid and not ring and not pinky:
             return G.PINCH
-        if d_tm < self._PINCH_TM_THRESH and mid and d_ti >= self._PINCH_TI_THRESH:
+        if tm_pinched and mid and not ti_pinched:
             return G.PINCH_RIGHT
-        if d_tp < self._PINCH_TP_THRESH and pinky and not idx and not mid and not ring:
+        if tp_pinched and pinky and not idx and not mid and not ring:
             return G.SAVE
 
         if finger_count == 0:
@@ -695,8 +719,8 @@ class DualHandProcessor:
         dom_lm = self._prep("dom", dom_lm)
         mod_lm = self._prep("mod", mod_lm)
 
-        raw_dom = self._rec.classify(dom_lm)
-        raw_mod = self._rec.classify(mod_lm)
+        raw_dom = self._rec.classify(dom_lm, "dom")
+        raw_mod = self._rec.classify(mod_lm, "mod")
 
         dom_g = self._stab["dom"].feed(raw_dom) if dom_lm else G.NONE
         mod_g = self._stab["mod"].feed(raw_mod) if mod_lm else G.NONE
@@ -742,6 +766,7 @@ class DualHandProcessor:
             self._smoother.reset(key)
             self._stab[key].reset()
             self._vel[key].reset()
+            self._rec.reset(key)
             return None
         return self._smoother.smooth(key, lm)
 
@@ -1671,12 +1696,12 @@ class CustomGestureRecogniser(GestureRecogniser):
         wrist = [self.pinch(lm, H.WRIST, t) for t in tips]
         return [*f, *inter, *wrist]   # 20 dimensions
 
-    def classify(self, lm) -> str:
+    def classify(self, lm, hand_key: str = "default") -> str:
         if lm is None:
             return G.NONE
         fv   = self.feature_vector(lm)
         name = self._knn(fv)
-        return name if name else super().classify(lm)
+        return name if name else super().classify(lm, hand_key)
 
     def _knn(self, fv: list) -> str | None:
         candidates: list[tuple[float, str]] = []
