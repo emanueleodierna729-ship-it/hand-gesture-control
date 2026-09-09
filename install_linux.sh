@@ -48,7 +48,7 @@ ok "Python $ver trovato ($PYTHON)"
 step "Installazione dipendenze di sistema..."
 case "$DISTRO" in
     debian)
-        sudo apt-get update -qq
+        sudo apt-get update -qq || warn "apt-get update fallito — continuo comunque"
         sudo apt-get install -y -qq python3-tk python3-dev python3-pip \
             portaudio19-dev libx11-dev python3-xlib 2>/dev/null || true
         ok "Dipendenze Debian/Ubuntu installate"
@@ -89,12 +89,21 @@ PACKAGES=(
     "SpeechRecognition>=3.10.0"
     "anthropic>=0.40.0"
 )
+FAILED_PACKAGES=()
 for pkg in "${PACKAGES[@]}"; do
     name="${pkg%%>*}"
     step "Installazione $name..."
-    "$PYTHON" -m pip install "$pkg" --quiet
-    ok "$name"
+    if "$PYTHON" -m pip install "$pkg" --quiet; then
+        ok "$name"
+    else
+        warn "Impossibile installare $name"
+        FAILED_PACKAGES+=("$name")
+    fi
 done
+if [ "${#FAILED_PACKAGES[@]}" -gt 0 ]; then
+    warn "Pacchetti non installati: ${FAILED_PACKAGES[*]}"
+    warn "L'applicazione potrebbe non funzionare correttamente."
+fi
 
 # PyAudio
 step "Installazione PyAudio (controllo vocale)..."

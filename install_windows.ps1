@@ -42,7 +42,11 @@ try {
 # 2. Aggiorna pip
 Write-Step "Aggiornamento pip..."
 python -m pip install --upgrade pip --quiet
-Write-OK "pip aggiornato"
+if ($LASTEXITCODE -eq 0) {
+    Write-OK "pip aggiornato"
+} else {
+    Write-Warn "Impossibile aggiornare pip — continuo con la versione corrente"
+}
 
 # 3. Installa dipendenze
 $packages = @(
@@ -56,19 +60,29 @@ $packages = @(
     "anthropic>=0.40.0"
 )
 
+$failedPackages = @()
 foreach ($pkg in $packages) {
     $name = ($pkg -split ">=|,")[0]
     Write-Step "Installazione $name..."
     python -m pip install "$pkg" --quiet
-    Write-OK $name
+    if ($LASTEXITCODE -eq 0) {
+        Write-OK $name
+    } else {
+        Write-Fail "Impossibile installare $name"
+        $failedPackages += $name
+    }
+}
+if ($failedPackages.Count -gt 0) {
+    Write-Warn "Pacchetti non installati: $($failedPackages -join ', ')"
+    Write-Warn "L'applicazione potrebbe non funzionare correttamente."
 }
 
 # 4. PyAudio (opzionale — per il controllo vocale)
 Write-Step "Installazione PyAudio (controllo vocale)..."
-try {
-    python -m pip install pyaudio --quiet
+python -m pip install pyaudio --quiet
+if ($LASTEXITCODE -eq 0) {
     Write-OK "PyAudio"
-} catch {
+} else {
     Write-Warn "PyAudio non installabile automaticamente."
     Write-Warn "Per il controllo vocale: pip install pyaudio"
 }

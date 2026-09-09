@@ -126,3 +126,28 @@ App lanciata con `python3.12 hand_gesture_control.py` sotto `DISPLAY=:99`.
 ---
 
 *Certificazione generata automaticamente da Claude Code — sessione https://claude.ai/code/session_01BUNwKydE8YL9DeRXcWwTMJ*
+
+---
+
+## Aggiornamento — 2026-09-09
+
+**Branch**: `claude/hand-control-improvement-muu918` (PR #9)
+**Sessione**: https://claude.ai/code/session_01LQXf4xaVNi3YUQpLrs89HL
+
+### Modifiche
+
+| Area | Cosa è cambiato |
+|------|------------------|
+| `GestureRecogniser` | Isteresi (Schmitt trigger) sui pinch indice/medio/mignolo — soglia di rilascio 25% più ampia di quella di innesco (`Cfg.PINCH_RELEASE_RATIO`), stato tracciato per mano (`hand_key`), per eliminare lo sfarfallio del gesto vicino al bordo di soglia |
+| Logo | `assets/logo.svg`, `logo_192.png`, `logo_512.png` rinnovati — palette duotone viola→ciano, sfondo con gradiente più profondo, proporzioni rifinite per leggibilità a 192px |
+| Installer | `install_windows.ps1`: corretto un bug per cui `python -m pip install` falliva silenziosamente e lo script riportava comunque "OK" (mancava il controllo di `$LASTEXITCODE`) — riguardava l'aggiornamento di pip, ogni pacchetto core e PyAudio. `install_linux.sh` / `install_macos.sh`: `apt-get update` e `brew install portaudio` potevano interrompere l'intero installer (`set -e`) per un singolo comando di sistema fallito; ora sono tollerati con avviso, e il ciclo di installazione pacchetti pip riporta i fallimenti invece di uscire di colpo — comportamento allineato a quello già presente in `install.py` |
+
+### Test
+
+```
+python3 -m unittest test_gesture_control      → 109/109 PASS  (+6 su TestPinchHysteresis)
+python3 test_gesture_control.py --x100        → 10900/10900 PASS
+bash -n install_linux.sh / install_macos.sh   → sintassi OK
+```
+
+Nessun test manuale con webcam reale in questa sessione (ambiente headless, senza hardware). `install_windows.ps1` non verificabile in questo ambiente (nessun runtime PowerShell disponibile) — la correzione è stata fatta per lettura del codice, non per esecuzione.
