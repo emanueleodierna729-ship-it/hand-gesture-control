@@ -243,6 +243,10 @@ class OneEuroFilter:
         self._x_prev = None
         self._dx_prev = None
 
+    def set_beta(self, beta: float):
+        """Update responsiveness live (higher = less lag, more jitter)."""
+        self._beta = beta
+
 
 # ─────────────────────────────────────────────────────────────
 #  LANDMARK SMOOTHER  — per-hand EMA on raw 21-point positions
@@ -787,9 +791,8 @@ class DualHandProcessor:
                     if self.mouse.zoom(-1):
                         self._zoom_ref = d
                         return G.ZOOM_OUT
-            return G.ZOOM_IN if d > (self._zoom_ref or d) else ""
-        else:
-            self._zoom_ref = None
+            return ""
+        self._zoom_ref = None
         return ""
 
     # ── modifier mode (non-dominant hand) ─────────────────────
@@ -1124,7 +1127,6 @@ class CameraThread(threading.Thread):
         fc = 0
 
         while self._running:
-            t_frame_start = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
                 time.sleep(Cfg.CAM_READ_RETRY_S)
@@ -1163,7 +1165,6 @@ class CameraThread(threading.Thread):
                 self.fps = fc / elapsed
                 fc, t0 = 0, time.perf_counter()
 
-            frame_elapsed = (time.perf_counter() - t_frame_start) * 1000
             self.perf.mark_frame()
 
             h, w = frame.shape[:2]
@@ -1871,10 +1872,10 @@ class Dashboard(tk.Tk):
         self._act_lbl.pack(pady=(0, 8))
 
         c4 = self._card(parent, "SENSIBILITÀ CURSORE")
-        self._smooth_var = tk.DoubleVar(value=Cfg.SMOOTH)
-        ttk.Scale(c4, from_=0.05, to=1.0, orient="horizontal",
+        self._smooth_var = tk.DoubleVar(value=Cfg.CURSOR_BETA)
+        ttk.Scale(c4, from_=0.001, to=0.05, orient="horizontal",
                   variable=self._smooth_var,
-                  command=lambda v: setattr(Cfg, "SMOOTH", float(v))
+                  command=self._on_smooth_change
                   ).pack(fill="x", padx=16, pady=(4, 10))
 
     def _build_voice_tab(self, parent):
@@ -2196,6 +2197,12 @@ class Dashboard(tk.Tk):
             n      = self._db.sample_count(name)
             label  = f"{name}  →  {action} {arg}  [{n}]"
             self._learn_listbox.insert("end", label)
+
+    def _on_smooth_change(self, value: str):
+        beta = float(value)
+        Cfg.CURSOR_BETA = beta
+        self.mouse._filter_x.set_beta(beta)
+        self.mouse._filter_y.set_beta(beta)
 
     # ── toggles ───────────────────────────────────────────────
     def _toggle_hand(self):

@@ -63,7 +63,7 @@ from hand_gesture_control import (
     Cfg, CommandParser, LandmarkSmoother, GestureStabiliser,
     VelocityTracker, GestureRecogniser, CustomGestureRecogniser,
     GestureDatabase, GestureRecorder, SmoothMouse, G, HandTracker,
-    AutonomousAgent, VoiceController, run_action,
+    AutonomousAgent, VoiceController, run_action, DualHandProcessor,
 )
 
 
@@ -136,6 +136,14 @@ def _pinch_hand_at(dist):
     lm[HandTracker.THUMB_IP]   = (0.45, 0.50, 0.0)
     lm[HandTracker.INDEX_TIP]  = (0.50 + dist, 0.50, 0.0)
     lm[HandTracker.INDEX_PIP]  = (0.50, 0.60, 0.0)
+    return lm
+
+
+def _pinch_hand_with_wrist(wrist_x):
+    """Pinching hand (fixed close distance) with a controllable wrist x position,
+    used to drive the two-hand pinch-zoom wrist-separation math."""
+    lm = _pinch_hand()
+    lm[HandTracker.WRIST] = (wrist_x, 0.5, 0.0)
     return lm
 
 
@@ -426,6 +434,16 @@ class TestGestureRecogniser(unittest.TestCase):
         lm = _pinch_hand()
         self.assertEqual(self.rec.classify(lm), G.PINCH)
 
+    def test_fingers_up_all(self):
+        lm = _flat_hand()
+        f = self.rec.fingers_up(lm)
+        self.assertEqual(sum(f), 5)
+
+    def test_fingers_up_none(self):
+        lm = _fist_hand()
+        f = self.rec.fingers_up(lm)
+        self.assertEqual(sum(f), 0)
+
 
 # ─────────────────────────────────────────────────────────────
 #  TEST: GestureRecogniser pinch hysteresis (Schmitt trigger)
@@ -472,15 +490,53 @@ class TestPinchHysteresis(unittest.TestCase):
         result = self.rec.classify(_pinch_hand_at(self.mid), "dom")
         self.assertEqual(result, G.CURSOR)
 
-    def test_fingers_up_all(self):
-        lm = _flat_hand()
-        f = self.rec.fingers_up(lm)
-        self.assertEqual(sum(f), 5)
 
-    def test_fingers_up_none(self):
-        lm = _fist_hand()
-        f = self.rec.fingers_up(lm)
-        self.assertEqual(sum(f), 0)
+# ─────────────────────────────────────────────────────────────
+#  TEST: DualHandProcessor two-hand pinch-zoom
+# ─────────────────────────────────────────────────────────────
+class TestTwoHandZoom(unittest.TestCase):
+    def setUp(self):
+        self.mouse = SmoothMouse()
+        self.proc  = DualHandProcessor(self.mouse)
+
+    def _prime_stable_pinch(self, dom_x, mod_x):
+        """Feed identical frames until the gesture stabiliser latches PINCH
+        on both hands, establishing _zoom_ref. Returns the last action."""
+        dom = _pinch_hand_with_wrist(dom_x)
+        mod = _pinch_hand_with_wrist(mod_x)
+        action = ""
+        for _ in range(Cfg.GEST_WIN):
+            _, _, action = self.proc.process([(dom, "Right"), (mod, "Left")])
+        return action
+
+    def test_no_action_label_while_establishing_zoom_ref(self):
+        action = self._prime_stable_pinch(0.9, 0.1)
+        self.assertEqual(action, "")
+
+    def test_zoom_in_label_only_when_action_actually_fires(self):
+        self._prime_stable_pinch(0.9, 0.1)
+        mod = _pinch_hand_with_wrist(0.1)
+
+        # widen well past the dead zone: the real mouse.zoom() cooldown is
+        # fresh, so this should both fire and report ZOOM_IN
+        dom2 = _pinch_hand_with_wrist(0.9 + Cfg.ZOOM_DEAD * 5)
+        _, _, action = self.proc.process([(dom2, "Right"), (mod, "Left")])
+        self.assertEqual(action, G.ZOOM_IN)
+
+    def test_no_stale_zoom_label_when_action_blocked_by_cooldown(self):
+        self._prime_stable_pinch(0.9, 0.1)
+        mod = _pinch_hand_with_wrist(0.1)
+
+        dom2 = _pinch_hand_with_wrist(0.9 + Cfg.ZOOM_DEAD * 5)
+        _, _, action = self.proc.process([(dom2, "Right"), (mod, "Left")])
+        self.assertEqual(action, G.ZOOM_IN)
+
+        # widen again immediately: SmoothMouse.zoom() is still inside
+        # Cfg.ZOOM_CD, so no OS-level zoom actually fires. The reported
+        # action must not claim ZOOM_IN happened when it didn't.
+        dom3 = _pinch_hand_with_wrist(0.9 + Cfg.ZOOM_DEAD * 10)
+        _, _, action2 = self.proc.process([(dom3, "Right"), (mod, "Left")])
+        self.assertEqual(action2, "")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -927,6 +983,7 @@ def _build_suite():
         TestVelocityTracker,
         TestGestureRecogniser,
         TestPinchHysteresis,
+        TestTwoHandZoom,
         TestSmoothMouseCoords,
         TestGestureDatabase,
         TestCustomGestureRecogniser,
