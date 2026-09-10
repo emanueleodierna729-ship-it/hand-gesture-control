@@ -640,6 +640,17 @@ class TestGestureDatabase(unittest.TestCase):
         self.db._load()   # should not raise
         self.assertEqual(self.db._d, {})
 
+    def test_load_valid_json_wrong_shape(self):
+        # Valid JSON but not an object (e.g. a truncated/foreign write) must
+        # not leave self._d as a list/str — every other method assumes a dict.
+        with open(self.tmp.name, "w") as f:
+            json.dump(["not", "a", "dict"], f)
+        self.db._load()   # should not raise
+        self.assertEqual(self.db._d, {})
+        # and the database must stay usable afterwards
+        self.db.add_sample("wave", [0.1] * 20)
+        self.assertEqual(self.db.sample_count("wave"), 1)
+
 
 # ─────────────────────────────────────────────────────────────
 #  TEST: CustomGestureRecogniser (k-NN)

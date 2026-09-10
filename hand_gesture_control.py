@@ -1600,7 +1600,8 @@ class GestureDatabase:
     def _load(self):
         try:
             with open(self.DB_FILE, encoding="utf-8") as f:
-                self._d = json.load(f)
+                data = json.load(f)
+            self._d = data if isinstance(data, dict) else {}
         except (FileNotFoundError, json.JSONDecodeError):
             self._d = {}
 
