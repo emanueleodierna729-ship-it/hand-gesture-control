@@ -59,11 +59,12 @@ fi
 # PortAudio (per PyAudio / controllo vocale)
 step "Installazione PortAudio (richiesto per controllo vocale)..."
 if $HAS_BREW; then
-    if brew list portaudio &>/dev/null 2>&1; then
+    if brew list portaudio &>/dev/null; then
         ok "PortAudio già installato"
-    else
-        brew install portaudio --quiet
+    elif brew install portaudio --quiet; then
         ok "PortAudio installato"
+    else
+        warn "PortAudio non installabile via brew — il controllo vocale potrebbe non funzionare"
     fi
 else
     warn "Installa PortAudio manualmente: brew install portaudio"
@@ -85,12 +86,21 @@ PACKAGES=(
     "SpeechRecognition>=3.10.0"
     "anthropic>=0.40.0"
 )
+FAILED_PACKAGES=()
 for pkg in "${PACKAGES[@]}"; do
     name="${pkg%%>*}"
     step "Installazione $name..."
-    "$PYTHON" -m pip install "$pkg" --quiet
-    ok "$name"
+    if "$PYTHON" -m pip install "$pkg" --quiet; then
+        ok "$name"
+    else
+        warn "Impossibile installare $name"
+        FAILED_PACKAGES+=("$name")
+    fi
 done
+if [ "${#FAILED_PACKAGES[@]}" -gt 0 ]; then
+    warn "Pacchetti non installati: ${FAILED_PACKAGES[*]}"
+    warn "L'applicazione potrebbe non funzionare correttamente."
+fi
 
 # PyAudio
 step "Installazione PyAudio (controllo vocale)..."

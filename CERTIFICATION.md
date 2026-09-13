@@ -126,3 +126,52 @@ App lanciata con `python3.12 hand_gesture_control.py` sotto `DISPLAY=:99`.
 ---
 
 *Certificazione generata automaticamente da Claude Code — sessione https://claude.ai/code/session_01BUNwKydE8YL9DeRXcWwTMJ*
+
+---
+
+## Aggiornamento — 2026-09-09
+
+**Branch**: `claude/hand-control-improvement-muu918` (PR #9)
+**Sessione**: https://claude.ai/code/session_01LQXf4xaVNi3YUQpLrs89HL
+
+### Modifiche
+
+| Area | Cosa è cambiato |
+|------|------------------|
+| `GestureRecogniser` | Isteresi (Schmitt trigger) sui pinch indice/medio/mignolo — soglia di rilascio 25% più ampia di quella di innesco (`Cfg.PINCH_RELEASE_RATIO`), stato tracciato per mano (`hand_key`), per eliminare lo sfarfallio del gesto vicino al bordo di soglia |
+| Logo | `assets/logo.svg`, `logo_192.png`, `logo_512.png` rinnovati — palette duotone viola→ciano, sfondo con gradiente più profondo, proporzioni rifinite per leggibilità a 192px |
+| Installer | `install_windows.ps1`: corretto un bug per cui `python -m pip install` falliva silenziosamente e lo script riportava comunque "OK" (mancava il controllo di `$LASTEXITCODE`) — riguardava l'aggiornamento di pip, ogni pacchetto core e PyAudio. `install_linux.sh` / `install_macos.sh`: `apt-get update` e `brew install portaudio` potevano interrompere l'intero installer (`set -e`) per un singolo comando di sistema fallito; ora sono tollerati con avviso, e il ciclo di installazione pacchetti pip riporta i fallimenti invece di uscire di colpo — comportamento allineato a quello già presente in `install.py` |
+
+### Test
+
+```
+python3 -m unittest test_gesture_control      → 109/109 PASS  (+6 su TestPinchHysteresis)
+python3 test_gesture_control.py --x100        → 10900/10900 PASS
+bash -n install_linux.sh / install_macos.sh   → sintassi OK
+```
+
+Nessun test manuale con webcam reale in questa sessione (ambiente headless, senza hardware). `install_windows.ps1` non verificabile in questo ambiente (nessun runtime PowerShell disponibile) — la correzione è stata fatta per lettura del codice, non per esecuzione.
+
+---
+
+## Aggiornamento — Revisione maniacale, 2026-09-10
+
+Seconda passata di revisione mirata a trovare bug reali (non solo stile), sullo stesso branch/PR.
+
+### Bug trovati e corretti
+
+| Area | Bug | Fix |
+|------|-----|-----|
+| `DualHandProcessor._two_hands` (zoom a due mani) | Una riga di fallback residua poteva restituire l'etichetta `ZOOM_IN` anche quando `mouse.zoom()` era bloccato dal cooldown (`Cfg.ZOOM_CD`) o la distanza era ancora nella dead-zone (`Cfg.ZOOM_DEAD`) — l'azione mostrata non corrispondeva a quella realmente eseguita, con possibile sfarfallio dell'etichetta per rumore | Rimossa la riga; l'azione riportata ora coincide sempre con l'azione davvero eseguita |
+| Dashboard, tab "Mani" | Lo slider "SENSIBILITÀ CURSORE" scriveva su `Cfg.SMOOTH`, parametro legacy non più letto da nessuna parte da quando il cursore usa il One-Euro Filter — muoverlo non aveva alcun effetto reale | Aggiunto `OneEuroFilter.set_beta()`; lo slider ora modifica live `Cfg.CURSOR_BETA` sui filtri del mouse |
+| `GestureDatabase._load()` | Caricava qualunque JSON valido senza controllare che fosse un oggetto — un file `user_gestures.json` con JSON valido ma non a forma di dict (es. `[]`, scrittura parziale/corrotta) avrebbe fatto crashare l'app ad ogni frame (`CustomGestureRecogniser._knn()` chiama `self._db._d.items()` continuamente durante il tracking) | Validato il tipo dopo il parsing: se non è un dict, fallback a `{}` |
+| `CameraThread.run()` | Variabile morta `frame_elapsed`/`t_frame_start` (calcolata e mai usata) | Rimossa |
+| `test_gesture_control.py` | Due metodi di test (`test_fingers_up_all/none`) erano finiti nella classe sbagliata durante un refactor precedente in questa stessa sessione | Rispostati in `TestGestureRecogniser` |
+
+### Test
+
+```
+python3 -m unittest test_gesture_control      → 113/113 PASS  (+3 TestTwoHandZoom, +1 TestGestureDatabase)
+```
+
+Ogni fix di correttezza è stato verificato riproducendo il bug sul codice precedente (il test dedicato fallisce lì, passa col fix) prima di essere considerato chiuso.
